@@ -1,9 +1,10 @@
 /venv
-/datasets/
+/datasets
 /zillow/zillow_main_new_models.py
 data_cache/
 *.pkl
 __pycache__/
 *.pyc
 /experiment_logs/
-/zillow/
+/zillow
+/datasets/
