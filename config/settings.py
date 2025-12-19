@@ -1,0 +1,99 @@
+import torch
+
+# Глобальные флаги для отладки
+DEBUG_MODE = False
+EXPERIMENTS_BASE_DIR = "experiment_logs"
+CACHE_DIR = "data_cache"  # Папка для кэширования предобработанных данных
+USE_CACHE = True  # Использовать ли кэш предобработанных данных
+
+# Настройки вычислений
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+N_JOBS = 8
+RANDOM_STATE = 42
+
+# Настройки pyDVL
+PYDVL_CONFIG = {
+    'n_steps': 10,
+    'rtol': 0.1,
+    'max_updates': 100,
+    'beta_shapley_params': {'alpha': 0.1, 'beta': 0.1}
+}
+
+# Настройки моделей
+MODEL_CONFIGS = {
+    'lightgbm': {
+        'objective': 'regression',
+        'metric': 'mae',
+        'num_leaves': 31,
+        'learning_rate': 0.05,
+        'feature_fraction': 0.9,
+        'bagging_fraction': 0.8,
+        'bagging_freq': 5,
+        'verbose': -1,
+        'n_jobs': -1,
+        'random_state': RANDOM_STATE
+    },
+    'xgboost': {
+        'objective': 'reg:squarederror',
+        'eval_metric': 'mae',
+        'max_depth': 6,
+        'learning_rate': 0.05,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'random_state': RANDOM_STATE,
+        'n_jobs': -1
+    },
+    'catboost': {
+        'iterations': 1000,
+        'learning_rate': 0.05,
+        'depth': 6,
+        'loss_function': 'MAE',
+        'verbose': False,
+        'random_state': RANDOM_STATE,
+        'thread_count': -1
+    },
+    'random_forest': {
+        'n_estimators': 100,
+        'max_depth': 10,
+        'random_state': RANDOM_STATE,
+        'n_jobs': -1
+    },
+    'pytorch': {
+        'simple': {
+            'layers': [128, 64, 32],
+            'dropout': 0.2,
+            'learning_rate': 0.001
+        },
+        'improved': {
+            'layers': [256, 128, 64, 32],
+            'batch_norm': True,
+            'dropout': [0.3, 0.3, 0.2],
+            'learning_rate': 0.001
+        },
+        'ft_transformer': {
+            'd_model': 64,
+            'nhead': 8,
+            'num_layers': 3,
+            'dim_feedforward': 256,
+            'dropout': 0.1,
+            'learning_rate': 0.001
+        },
+        'ft_transformer_simple': {
+            'd_model': 16,
+            'nhead': 4,
+            'num_layers': 1,
+            'dim_feedforward': 64,
+            'dropout': 0.1,
+            'learning_rate': 0.001
+        }
+    }
+}
+
+# Настройки экспериментов
+EXPERIMENT_CONFIG = {
+    'test_size': 0.2,
+    'n_epochs': 50,
+    'sample_size_percentage': 1.0,
+    'n_remove_list': list(range(2, 101, 2)),  # 2%, 4%, ..., 100%
+    'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']
+}

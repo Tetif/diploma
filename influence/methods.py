@@ -1,0 +1,353 @@
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import TensorDataset, DataLoader
+from joblib import parallel_config
+from scipy.stats import rankdata
+
+from pydvl.valuation.dataset import Dataset
+from pydvl.valuation.utility import ModelUtility
+from pydvl.valuation.scorers import SupervisedScorer
+from pydvl.valuation.methods.loo import LOOValuation
+from pydvl.valuation.methods.shapley import ShapleyValuation
+from pydvl.valuation.methods.beta_shapley import BetaShapleyValuation
+from pydvl.valuation.samplers import PermutationSampler
+from pydvl.valuation.stopping import HistoryDeviation, MaxUpdates
+from pydvl.influence.torch import DirectInfluence
+from pydvl.influence import InfluenceMode
+
+from experiments.logger import debug_print
+from config.settings import PYDVL_CONFIG, N_JOBS
+from .scorers import ScorerFactory
+
+
+class InfluenceMethods:
+    """Класс для работы с методами оценки влияния"""
+
+    def __init__(self, logger=None):
+        self.logger = logger
+        self.methods = {}
+
+    def setup_methods(self, pipeline, X_train, y_train, X_val, y_val,
+                      preprocessor, methods_to_use=None):
+        """
+        Подготавливает методы оценки влияния
+        """
+        if self.logger:
+            self.logger.log_message("\n" + "=" * 60)
+            self.logger.log_message("SETTING UP INFLUENCE METHODS")
+            self.logger.log_message("=" * 60)
+        else:
+            debug_print("Setting up influence methods...")
+
+        # Подготовка данных
+        X_train_t = preprocessor.transform(X_train)
+        X_val_t = preprocessor.transform(X_val)
+
+        if hasattr(X_train_t, 'toarray'):
+            X_train_t = X_train_t.toarray()
+            X_val_t = X_val_t.toarray()
+
+        X_train_t = np.asarray(X_train_t)
+        X_val_t = np.asarray(X_val_t)
+        y_train_1d = np.asarray(y_train).reshape(-1)
+        y_val_1d = np.asarray(y_val).reshape(-1)
+
+        # Создание Dataset
+        n_features = X_train_t.shape[1]
+        feature_names = [f"x{i + 1}" for i in range(n_features)]
+
+        X_train_df = pd.DataFrame(X_train_t, columns=feature_names)
+        X_val_df = pd.DataFrame(X_val_t, columns=feature_names)
+        y_train_series = pd.Series(y_train_1d, name="y")
+        y_val_series = pd.Series(y_val_1d, name="y")
+
+        try:
+            val_dataset = Dataset(X_train_df, y_train_series, X_val_df, y_val_series)
+        except Exception as e:
+            debug_print(f"DataFrame Dataset failed: {e}, trying array interface")
+            val_dataset = Dataset(X_train_t, y_train_1d.reshape(-1, 1), X_val_t, y_val_1d.reshape(-1, 1))
+
+        # Создание скорера
+        scorer_callable = ScorerFactory.create_scorer('neg_mae')
+        model_wrapper = pipeline.named_steps['model']
+
+        supervised_scorer = SupervisedScorer(
+            scoring=scorer_callable,
+            test_data=val_dataset,
+            default=float(-1e6),
+            range=None
+        )
+
+        utility = ModelUtility(
+            model=model_wrapper,
+            scorer=supervised_scorer,
+            show_warnings=True
+        )
+
+        # Определение методов для использования
+        if methods_to_use is None:
+            methods_to_use = ['LOO', 'DataShapley', 'BetaShapley']
+
+            # Проверяем, является ли модель PyTorch моделью
+            is_pytorch = hasattr(model_wrapper, 'model') and isinstance(getattr(model_wrapper, 'model', None),
+                                                                        torch.nn.Module)
+            if is_pytorch:
+                methods_to_use.append('Influence')
+
+        # Инициализация методов
+        try:
+            with parallel_config(backend="threading", n_jobs=N_JOBS):
+                for method_name in methods_to_use:
+                    if method_name == 'LOO':
+                        if self.logger:
+                            self.logger.start_timing("LOO_setup")
+                        self.methods['LOO'] = LOOValuation(
+                            utility=utility,
+                            progress=True
+                        )
+                        if self.logger:
+                            self.logger.end_timing("LOO_setup")
+
+                    elif method_name == 'DataShapley':
+                        if self.logger:
+                            self.logger.start_timing("DataShapley_setup")
+                        self.methods['DataShapley'] = ShapleyValuation(
+                            utility=utility,
+                            sampler=PermutationSampler(truncation=None, seed=42),
+                            is_done=HistoryDeviation(n_steps=PYDVL_CONFIG['n_steps'],
+                                                     rtol=PYDVL_CONFIG['rtol']) | MaxUpdates(
+                                PYDVL_CONFIG['max_updates']),
+                            progress=True
+                        )
+                        if self.logger:
+                            self.logger.end_timing("DataShapley_setup")
+
+                    elif method_name == 'BetaShapley':
+                        if self.logger:
+                            self.logger.start_timing("BetaShapley_setup")
+                        self.methods['BetaShapley'] = BetaShapleyValuation(
+                            utility=utility,
+                            sampler=PermutationSampler(truncation=None, seed=42),
+                            is_done=HistoryDeviation(n_steps=PYDVL_CONFIG['n_steps'],
+                                                     rtol=PYDVL_CONFIG['rtol']) | MaxUpdates(
+                                PYDVL_CONFIG['max_updates']),
+                            alpha=PYDVL_CONFIG['beta_shapley_params']['alpha'],
+                            beta=PYDVL_CONFIG['beta_shapley_params']['beta'],
+                            progress=True
+                        )
+                        if self.logger:
+                            self.logger.end_timing("BetaShapley_setup")
+
+                    elif method_name == 'Influence':
+                        if self.logger:
+                            self.logger.start_timing("Influence_setup")
+                        self.methods['Influence'] = DirectInfluence(
+                            getattr(model_wrapper, "model", model_wrapper),
+                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            regularization=1e-4
+                        )
+                        if self.logger:
+                            self.logger.end_timing("Influence_setup")
+
+        except Exception as e:
+            debug_print(f"Error initializing methods: {e}")
+            import traceback
+            debug_print(traceback.format_exc())
+
+        if self.logger:
+            self.logger.log_message("Methods initialization completed!")
+
+        return self.methods, scorer_callable
+
+    def compute_scores(self, methods, X_train, y_train, preprocessor, X_val, y_val, pipeline):
+        """Вычисление influence scores с сохранением сырых значений"""
+        from .utils import _extract_numeric_values_from_result
+
+        if self.logger:
+            self.logger.log_message("\n" + "=" * 60)
+            self.logger.log_message("COMPUTING INFLUENCE SCORES")
+            self.logger.log_message("=" * 60)
+
+        # Трансформация данных
+        X_train_t = preprocessor.transform(X_train)
+        X_val_t = preprocessor.transform(X_val)
+
+        if hasattr(X_train_t, 'toarray'):
+            X_train_t = X_train_t.toarray()
+            X_val_t = X_val_t.toarray()
+
+        X_train_t = np.asarray(X_train_t)
+        X_val_t = np.asarray(X_val_t)
+        y_train_arr = np.asarray(y_train).reshape(-1)
+        y_val_arr = np.asarray(y_val).reshape(-1)
+
+        # Создание Dataset
+        n_features = X_train_t.shape[1]
+        feature_names = [f"x{i + 1}" for i in range(n_features)]
+
+        X_train_df = pd.DataFrame(X_train_t, columns=feature_names)
+        X_val_df = pd.DataFrame(X_val_t, columns=feature_names)
+        y_train_series = pd.Series(y_train_arr, name="y")
+        y_val_series = pd.Series(y_val_arr, name="y")
+
+        try:
+            train_dataset = Dataset(X_train_df, y_train_series, X_val_df, y_val_series)
+        except Exception as e:
+            train_dataset = Dataset(X_train_t, y_train_arr.reshape(-1, 1), X_val_t, y_val_arr.reshape(-1, 1))
+
+        scores = {}
+        scores_raw = {}
+
+        for name, method in methods.items():
+            if self.logger:
+                self.logger.start_timing(f"{name}_computation")
+                self.logger.log_message(f"\n--- Computing {name} scores ---")
+
+            try:
+                if name == 'Influence':
+                    # Вычисление влияния для PyTorch моделей
+                    train_loader = DataLoader(
+                        TensorDataset(
+                            torch.FloatTensor(X_train_t),
+                            torch.FloatTensor(y_train_arr.reshape(-1, 1))
+                        ),
+                        batch_size=32,
+                        shuffle=False
+                    )
+
+                    infl = method.fit(train_loader)
+                    zf = infl.influence_factors(
+                        torch.FloatTensor(X_val_t),
+                        torch.FloatTensor(y_val_arr.reshape(-1, 1))
+                    )
+
+                    scores_raw_val = infl.influences_from_factors(
+                        zf,
+                        torch.FloatTensor(X_train_t),
+                        torch.FloatTensor(y_train_arr.reshape(-1, 1)),
+                        mode=InfluenceMode.Up
+                    ).cpu().numpy()
+
+                    # Агрегирование влияний
+                    if scores_raw_val.ndim == 2:
+                        per_train = np.abs(scores_raw_val).sum(axis=0)
+                    elif scores_raw_val.ndim > 2:
+                        per_train = np.abs(scores_raw_val).sum(axis=tuple(range(scores_raw_val.ndim - 1)))
+                    else:
+                        per_train = np.abs(scores_raw_val).flatten()
+
+                    scores_raw[name] = per_train.copy()
+
+                    # Нормализация
+                    if per_train.max() > per_train.min():
+                        scaled = (per_train - per_train.min()) / (per_train.max() - per_train.min() + 1e-10)
+                    else:
+                        scaled = np.ones_like(per_train) * 0.5
+
+                    scores[name] = scaled
+
+                else:
+                    # Вычисление для других методов
+                    with parallel_config(backend="threading", n_jobs=N_JOBS):
+                        result = method.fit(train_dataset)
+
+                    values_arr = _extract_numeric_values_from_result(result)
+                    
+                    if values_arr.size == 0:
+                        debug_print(f"WARNING: No values extracted for {name}, using uniform")
+                        scores[name] = np.ones(len(X_train_t)) * 0.5
+                        scores_raw[name] = np.array([])
+                        continue
+
+                    scores_raw[name] = values_arr.copy()
+
+                    # Обработка неконечных значений
+                    finite_mask = np.isfinite(values_arr)
+                    if not finite_mask.all():
+                        debug_print(f"WARNING: Non-finite values in {name}: {np.sum(~finite_mask)}/{len(values_arr)}")
+                        finite_vals = values_arr[finite_mask]
+                        fill_val = np.median(finite_vals) if finite_vals.size > 0 else 0.0
+                        values_arr[~finite_mask] = fill_val
+
+                    abs_vals = np.abs(values_arr)
+                    max_abs = np.max(abs_vals) if len(abs_vals) > 0 else 1.0
+
+                    if max_abs < 1e-10:
+                        debug_print(f"WARNING: All values for {name} are near zero, using uniform distribution")
+                        scores[name] = np.ones(len(values_arr)) * 0.5
+                        continue
+                    elif max_abs < 1e-6:
+                        debug_print(f"WARNING: Values for {name} are very small, scaling up for better precision")
+                        scale_factor = 1e6 / max_abs if max_abs > 0 else 1e6
+                        values_arr = values_arr * scale_factor
+                        debug_print(f"Scaled values by {scale_factor:.2f}")
+
+                    positive_vals = values_arr[values_arr > 0]
+                    negative_vals = values_arr[values_arr < 0]
+                    zero_vals = values_arr[values_arr == 0]
+
+                    debug_print(
+                        f"Value distribution: {len(positive_vals)} positive, {len(negative_vals)} negative, {len(zero_vals)} zero")
+
+                    # Нормализация с использованием рангов
+                    if len(positive_vals) > 0 and len(negative_vals) > 0:
+                        debug_print("Mixed positive/negative values - using signed rank normalization")
+                        signed_ranks = rankdata(np.abs(values_arr), method="average") * np.sign(values_arr)
+                        min_rank = np.min(signed_ranks)
+                        max_rank = np.max(signed_ranks)
+                        if max_rank > min_rank:
+                            scaled = (signed_ranks - min_rank) / (max_rank - min_rank)
+                        else:
+                            scaled = np.ones_like(signed_ranks) * 0.5
+                    else:
+                        try:
+                            ranks = rankdata(values_arr, method="average")
+                            if len(values_arr) > 1:
+                                scaled = (ranks - 1) / (len(values_arr) - 1)
+                            else:
+                                scaled = np.ones_like(ranks) * 0.5
+                            debug_print(f"Standard rank normalization successful for {name}")
+                        except Exception as e:
+                            debug_print(f"Rank normalization failed for {name}: {e}, using winsorized min-max")
+                            lo = np.percentile(values_arr, 5)
+                            hi = np.percentile(values_arr, 95)
+                            vals_clip = np.clip(values_arr, lo, hi)
+                            if hi > lo:
+                                scaled = (vals_clip - lo) / (hi - lo)
+                            else:
+                                scaled = np.ones_like(vals_clip) * 0.5
+
+                    scores[name] = scaled
+
+                # Логирование результатов
+                if self.logger:
+                    final_scores = scores[name]
+                    raw_scores = scores_raw[name]
+                    self.logger.log_message(
+                        f"FINAL {name} - min: {final_scores.min():.6f}, max: {final_scores.max():.6f}, "
+                        f"mean: {final_scores.mean():.6f}, std: {final_scores.std():.6f}"
+                    )
+                    if len(raw_scores) > 0:
+                        self.logger.log_message(
+                            f"RAW {name} - min: {raw_scores.min():.6f}, max: {raw_scores.max():.6f}, "
+                            f"mean: {raw_scores.mean():.6f}, std: {raw_scores.std():.6f}"
+                        )
+                    
+                    if np.allclose(final_scores, 0.5, atol=0.01):
+                        debug_print(f"WARNING: All {name} scores are ~0.5 - this indicates a problem!")
+
+            except Exception as e:
+                if self.logger:
+                    self.logger.log_message(f"ERROR computing {name} scores: {type(e).__name__}: {e}")
+                    import traceback
+                    self.logger.log_message(traceback.format_exc())
+
+                # В случае ошибки используем равномерное распределение
+                scores[name] = np.ones(len(X_train_t)) * 0.5
+                scores_raw[name] = np.zeros(len(X_train_t))
+
+            if self.logger:
+                self.logger.end_timing(f"{name}_computation")
+
+        return scores, scores_raw
