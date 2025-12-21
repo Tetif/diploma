@@ -1,7 +1,7 @@
 import torch
 
 # Глобальные флаги для отладки
-DEBUG_MODE = False
+DEBUG_MODE = True
 EXPERIMENTS_BASE_DIR = "experiment_logs"
 CACHE_DIR = "data_cache"  # Папка для кэширования предобработанных данных
 USE_CACHE = True  # Использовать ли кэш предобработанных данных
@@ -60,12 +60,18 @@ MODEL_CONFIGS = {
     },
     'pytorch': {
         'simple': {
-            'layers': [128, 64, 32],
+            'layers': [16, 8, 4],
             'dropout': 0.2,
             'learning_rate': 0.001
         },
+    # 'pytorch': {
+    #     'simple': {
+    #         'layers': [128, 64, 32],
+    #         'dropout': 0.2,
+    #         'learning_rate': 0.001
+    #     },
         'improved': {
-            'layers': [256, 128, 64, 32],
+            'layers': [32, 16, 8, 4],
             'batch_norm': True,
             'dropout': [0.3, 0.3, 0.2],
             'learning_rate': 0.001

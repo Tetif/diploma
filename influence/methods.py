@@ -82,7 +82,9 @@ class InfluenceMethods:
         utility = ModelUtility(
             model=model_wrapper,
             scorer=supervised_scorer,
-            show_warnings=True
+            show_warnings=True,
+            # Clone model before each fit to avoid in-place state pollution (e.g., empty estimators_)
+            clone_before_fit=True
         )
 
         # Определение методов для использования
@@ -216,11 +218,49 @@ class InfluenceMethods:
                         shuffle=False
                     )
 
+                    # Log loader/model diagnostics
+                    if self.logger:
+                        try:
+                            n_train = len(train_loader.dataset)
+                            n_batches = len(train_loader)
+                            batch_size = train_loader.batch_size
+                            self.logger.log_message(
+                                f"Influence: train loader - {n_train} samples, {n_batches} batches, batch_size={batch_size}"
+                            )
+                            # model parameter count if available
+                            wrapped_model = getattr(pipeline.named_steps.get('model', {}), 'model', pipeline.named_steps.get('model', None))
+                            if hasattr(wrapped_model, 'parameters'):
+                                param_count = sum(p.numel() for p in wrapped_model.parameters())
+                                self.logger.log_message(f"Influence: model parameter count = {param_count}")
+                        except Exception as e:
+                            debug_print(f"Failed to log loader/model diagnostics: {e}")
+
                     infl = method.fit(train_loader)
+                    if self.logger:
+                        self.logger.log_message("Influence: DirectInfluence.fit completed")
+
                     zf = infl.influence_factors(
                         torch.FloatTensor(X_val_t),
                         torch.FloatTensor(y_val_arr.reshape(-1, 1))
                     )
+
+                    # Diagnostics for influence factors
+                    try:
+                        zf_np = zf.detach().cpu().numpy() if hasattr(zf, 'detach') else np.asarray(zf)
+                        if self.logger:
+                            self.logger.log_message(
+                                f"Influence: influence_factors shape={getattr(zf_np, 'shape', 'unknown')}, "
+                                f"dtype={zf_np.dtype if hasattr(zf_np, 'dtype') else 'unknown'}"
+                            )
+                            nan_count = np.isnan(zf_np).sum()
+                            inf_count = np.isinf(zf_np).sum()
+                            self.logger.log_message(f"Influence: zf NaN={nan_count}, Inf={inf_count}")
+                            if zf_np.size > 0:
+                                self.logger.log_message(
+                                    f"Influence factors stats - min={np.nanmin(zf_np):.6g}, max={np.nanmax(zf_np):.6g}, mean={np.nanmean(zf_np):.6g}, std={np.nanstd(zf_np):.6g}"
+                                )
+                    except Exception as e:
+                        debug_print(f"Failed to analyze influence_factors: {e}")
 
                     scores_raw_val = infl.influences_from_factors(
                         zf,
@@ -237,13 +277,48 @@ class InfluenceMethods:
                     else:
                         per_train = np.abs(scores_raw_val).flatten()
 
+                    # Diagnostics for raw influence values
+                    try:
+                        if self.logger:
+                            self.logger.log_message(
+                                f"Influence: raw influences shape={scores_raw_val.shape}, aggregated per-train length={len(per_train)}"
+                            )
+                            nan_count = np.isnan(per_train).sum()
+                            inf_count = np.isinf(per_train).sum()
+                            self.logger.log_message(f"Influence: per_train NaN={nan_count}, Inf={inf_count}")
+
+                            if per_train.size > 0:
+                                self.logger.log_message(
+                                    f"Influence RAW stats - min={np.min(per_train):.6g}, max={np.max(per_train):.6g}, mean={np.mean(per_train):.6g}, std={np.std(per_train):.6g}"
+                                )
+                                # Top / bottom indices for quick inspection
+                                idx_sorted = np.argsort(per_train)
+                                top_idx = idx_sorted[-5:][::-1]
+                                bot_idx = idx_sorted[:5]
+                                self.logger.log_message(
+                                    f"Top 5 influences (idx:value): {[(int(i), float(per_train[i])) for i in top_idx]}"
+                                )
+                                self.logger.log_message(
+                                    f"Bottom 5 influences (idx:value): {[(int(i), float(per_train[i])) for i in bot_idx]}"
+                                )
+                    except Exception as e:
+                        debug_print(f"Failed to log raw influence diagnostics: {e}")
+
                     scores_raw[name] = per_train.copy()
 
                     # Нормализация
-                    if per_train.max() > per_train.min():
+                    if per_train.size == 0:
+                        scaled = np.array([])
+                    elif per_train.max() > per_train.min():
                         scaled = (per_train - per_train.min()) / (per_train.max() - per_train.min() + 1e-10)
                     else:
                         scaled = np.ones_like(per_train) * 0.5
+
+                    # Additional checks on normalized values
+                    if self.logger and scaled.size > 0:
+                        self.logger.log_message(
+                            f"Influence NORMALIZED stats - min={scaled.min():.6g}, max={scaled.max():.6g}, mean={scaled.mean():.6g}, std={scaled.std():.6g}"
+                        )
 
                     scores[name] = scaled
 
@@ -252,8 +327,43 @@ class InfluenceMethods:
                     with parallel_config(backend="threading", n_jobs=N_JOBS):
                         result = method.fit(train_dataset)
 
+                    # Log raw result for diagnostics (truncated)
+                    try:
+                        if self.logger:
+                            self.logger.log_message(f"{name}: raw result type={type(result)}, len={len(result) if hasattr(result, '__len__') else 'unknown'}")
+                            self.logger.log_message(f"{name}: raw result repr (truncated): {repr(result)[:1000]}")
+                        else:
+                            debug_print(f"{name}: raw result type={type(result)}, len={len(result) if hasattr(result, '__len__') else 'unknown'}")
+                            debug_print(f"{name}: raw result repr (truncated): {repr(result)[:1000]}")
+                    except Exception as e:
+                        debug_print(f"Failed to log raw result for {name}: {e}")
+
                     values_arr = _extract_numeric_values_from_result(result)
-                    
+
+                    # Diagnostic logging about extracted values
+                    try:
+                        if self.logger:
+                            self.logger.log_message(f"{name}: extracted {values_arr.size} values")
+                            if values_arr.size > 0:
+                                finite_mask = np.isfinite(values_arr)
+                                n_finite = int(np.sum(finite_mask))
+                                n_nonfinite = int(np.sum(~finite_mask))
+                                n_unique = int(np.unique(values_arr[finite_mask]).size) if n_finite > 0 else 0
+                                pcts = np.percentile(values_arr[finite_mask], [1,5,25,50,75,95,99]) if n_finite > 0 else []
+                                self.logger.log_message(
+                                    f"{name}: finite={n_finite}, non-finite={n_nonfinite}, unique={n_unique}, percentiles (1,5,25,50,75,95,99)={list(pcts)}"
+                                )
+                                if n_finite > 0:
+                                    idx_sorted = np.argsort(values_arr[finite_mask])
+                                    # map back indices to original array
+                                    finite_idx = np.where(finite_mask)[0]
+                                    top_idx = finite_idx[idx_sorted[-5:]][::-1]
+                                    bot_idx = finite_idx[idx_sorted[:5]]
+                                    self.logger.log_message(f"{name} top 5 (idx:value): {[(int(i), float(values_arr[i])) for i in top_idx]}")
+                                    self.logger.log_message(f"{name} bottom 5 (idx:value): {[(int(i), float(values_arr[i])) for i in bot_idx]}")
+                    except Exception as e:
+                        debug_print(f"Failed to log extracted values diagnostics for {name}: {e}")
+
                     if values_arr.size == 0:
                         debug_print(f"WARNING: No values extracted for {name}, using uniform")
                         scores[name] = np.ones(len(X_train_t)) * 0.5
@@ -266,6 +376,9 @@ class InfluenceMethods:
                     finite_mask = np.isfinite(values_arr)
                     if not finite_mask.all():
                         debug_print(f"WARNING: Non-finite values in {name}: {np.sum(~finite_mask)}/{len(values_arr)}")
+                        if self.logger:
+                            bad_indices = np.where(~finite_mask)[0][:10]
+                            self.logger.log_message(f"{name}: non-finite indices sample: {list(bad_indices)}")
                         finite_vals = values_arr[finite_mask]
                         fill_val = np.median(finite_vals) if finite_vals.size > 0 else 0.0
                         values_arr[~finite_mask] = fill_val
@@ -280,6 +393,8 @@ class InfluenceMethods:
                     elif max_abs < 1e-6:
                         debug_print(f"WARNING: Values for {name} are very small, scaling up for better precision")
                         scale_factor = 1e6 / max_abs if max_abs > 0 else 1e6
+                        if self.logger:
+                            self.logger.log_message(f"{name}: scaling small values (max_abs={max_abs:.6g}) by factor {scale_factor:.6g}")
                         values_arr = values_arr * scale_factor
                         debug_print(f"Scaled values by {scale_factor:.2f}")
 
@@ -287,8 +402,10 @@ class InfluenceMethods:
                     negative_vals = values_arr[values_arr < 0]
                     zero_vals = values_arr[values_arr == 0]
 
-                    debug_print(
-                        f"Value distribution: {len(positive_vals)} positive, {len(negative_vals)} negative, {len(zero_vals)} zero")
+                    if self.logger:
+                        self.logger.log_message(
+                            f"{name} value distribution: {len(positive_vals)} positive, {len(negative_vals)} negative, {len(zero_vals)} zero"
+                        )
 
                     # Нормализация с использованием рангов
                     if len(positive_vals) > 0 and len(negative_vals) > 0:
@@ -317,6 +434,20 @@ class InfluenceMethods:
                                 scaled = (vals_clip - lo) / (hi - lo)
                             else:
                                 scaled = np.ones_like(vals_clip) * 0.5
+
+                    # Log normalized diagnostics
+                    if self.logger:
+                        try:
+                            if scaled.size > 0:
+                                self.logger.log_message(
+                                    f"{name} NORMALIZED stats - min={scaled.min():.6g}, max={scaled.max():.6g}, mean={scaled.mean():.6g}, std={scaled.std():.6g}"
+                                )
+                                idx_sorted = np.argsort(scaled)
+                                top_idx = idx_sorted[-5:][::-1]
+                                bot_idx = idx_sorted[:5]
+                                self.logger.log_message(f"{name} normalized top 5 (idx:value): {[(int(i), float(scaled[i])) for i in top_idx]}")
+                        except Exception as e:
+                            debug_print(f"Failed to log normalized diagnostics for {name}: {e}")
 
                     scores[name] = scaled
 

@@ -20,6 +20,17 @@ def make_stable_neg_mae(fail_score=-1e6):
                 return float(fail_score)
 
             if hasattr(model, "predict"):
+                # Detect common sklearn unfitted state where estimators_ may be empty (RandomForest)
+                model_for_check = getattr(model, "model", model)
+                try:
+                    ests = getattr(model_for_check, 'estimators_', None)
+                    if ests is not None and len(ests) == 0:
+                        debug_print("Model appears unfitted (estimators_ is empty). Returning fail_score. Consider setting clone_before_fit=True or ensuring fit succeeded.")
+                        return float(fail_score)
+                except Exception:
+                    # If checking fails, continue and let predict handle the real error
+                    pass
+
                 y_pred = model.predict(x_np)
             else:
                 model_module = getattr(model, "model", model)
@@ -42,7 +53,29 @@ def make_stable_neg_mae(fail_score=-1e6):
             score = -mae
             return float(score)
         except Exception as e:
+            import traceback
             debug_print(f"Error in scorer: {e}")
+            debug_print(traceback.format_exc())
+            # Provide contextual information to aid debugging
+            try:
+                x_len = len(x) if hasattr(x, '__len__') else 'unknown'
+                y_len = len(y) if hasattr(y, '__len__') else 'unknown'
+            except Exception:
+                x_len, y_len = 'unknown', 'unknown'
+            debug_print(f"Scorer context: model={type(model).__name__}, has_predict={hasattr(model, 'predict')}, x_len={x_len}, y_len={y_len}")
+            # Try a small sample prediction to capture predictable failures
+            try:
+                if hasattr(model, "predict") and x_len != 'unknown' and x_len > 0:
+                    sample_x = x.values[:5] if hasattr(x, 'values') else np.asarray(x)[:5]
+                    try:
+                        sample_pred = model.predict(sample_x)
+                        debug_print(f"Sample prediction (len={len(sample_pred)}): {repr(sample_pred)[:500]}")
+                    except Exception as pred_e:
+                        debug_print(f"Model.predict failed on sample: {pred_e}")
+                else:
+                    debug_print("Model has no 'predict' or empty input; may be a torch model or empty dataset")
+            except Exception:
+                pass
             return float(fail_score)
 
     return stable_neg_mae_model

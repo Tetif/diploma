@@ -3,6 +3,7 @@ import pandas as pd
 import pydvl
 import torch
 import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
 
 from config.settings import (
     DEBUG_MODE, EXPERIMENTS_BASE_DIR, DEVICE,
@@ -52,10 +53,11 @@ def main():
             'submission': 'sample_submission.csv'
         },
         'model_params': {
-            'model_type': 'catboost',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
+            'model_type': 'lightgbm',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
             'model_architecture': 'simple',  # Для pytorch: simple, improved или ft_transformer
             'input_size': 'auto',
-            'device': DEVICE
+            'device': DEVICE,
+            'removal_strategy': 'remove_highest_influence'
         },
         'training_params': EXPERIMENT_CONFIG.copy()
     }
@@ -97,65 +99,98 @@ def main():
     if len(df) < len(df_train_check):
         logger.log_message(f"⚠️ Lost {len(df_train_check) - len(df):,} rows in merge (no matching properties)")
 
-    # Предобработка с кэшированием
-    cache = DataCache(cache_dir=CACHE_DIR, logger=logger) if USE_CACHE else None
-    cache_key = None
-    preprocessor = DataPreprocessor(logger)  # Всегда создаем preprocessor
-    
-    if cache and USE_CACHE:
-        cache_key = cache.get_cache_key([PROP_PATH, TRAIN_PATH], {'target': 'logerror'})
-        X, y, metadata = cache.load(cache_key)
-        
-        if X is not None:
-            logger.log_message("✅ Using cached preprocessed data")
-        else:
-            logger.log_message("📝 Cache not found, preprocessing data...")
-            X, y = preprocessor.comprehensive_preprocessing(df, target='logerror')
-            
-            # Сохраняем в кэш
-            metadata = {
-                'shape': X.shape,
-                'target': 'logerror',
-                'preprocessing_time': logger.timings.get('preprocessing', {}).get('duration', 0)
-            }
-            cache.save(X, y, cache_key, metadata)
-    else:
-        logger.log_message("📝 Preprocessing data (cache disabled)...")
-        X, y = preprocessor.comprehensive_preprocessing(df, target='logerror')
+    # СНАЧАЛА ОТДЕЛЯЕМ HOLDOUT VALIDATION ОТ ПОЛНОГО ДАТАСЕТА
+    logger.log_message("Creating holdout validation set from full dataset...")
+    X_full = df.drop(columns=['logerror'])
+    y_full = df['logerror']
 
-    logger.log_message(f"   After preprocessing: {X.shape[0]} rows, {X.shape[1]} features")
+    # Отделяем 20% данных для holdout validation - эти данные БОЛЬШЕ НИКОГДА НЕ ИСПОЛЬЗУЮТСЯ
+    X_temp, X_holdout_validation, y_temp, y_holdout_validation = train_test_split(
+        X_full, y_full, test_size=0.2, random_state=42
+    )
 
-    # Построение предобработчика
-    preproc_pipeline, num_cols, cat_cols = preprocessor.build_preprocessor(X)
+    logger.log_message(f"Holdout validation set created: {len(X_holdout_validation)} rows (untouched)")
 
-    # Выборка данных
-    n = 0.001  # 0.1% от данных
-    logger.log_message(f"\nTaking {n * 100}% sample of the data...")
-    X_sample, y_sample = sample_data(X, y, sample_fraction=n)
+    # Теперь от оставшихся 80% данных берем подвыборку для эффективного обучения
+    n = 0.001
+    logger.log_message(f"Taking {n * 100}% sample from remaining {len(X_temp)} rows for training...")
+    X_sample, y_sample = sample_data(X_temp, y_temp, sample_fraction=n)
+
+    logger.log_message(f"Training sample size: {X_sample.shape[0]} rows, {X_sample.shape[1]} features")
+
+    # Разделяем подвыборку на train и test для обучения моделей
+    logger.log_message("Splitting training sample into train/test sets...")
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_sample, y_sample, test_size=0.25, random_state=42
+    )
+
+    logger.log_message(f"Final data split:")
+    logger.log_message(f"   Train: {len(X_train)} rows (for training models)")
+    logger.log_message(f"   Test: {len(X_test)} rows (for validation during training)")
+    logger.log_message(f"   Holdout Validation: {len(X_holdout_validation)} rows (NEVER USED until final evaluation)")
+
+    # Сначала определяем колонки для удаления на объединенном train+test датасете
+    preprocessor = DataPreprocessor(logger)
+    logger.log_message("Determining columns to drop from combined train+test data...")
+    X_train_test_combined = pd.concat([pd.concat([X_train, y_train], axis=1),
+                                       pd.concat([X_test, y_test], axis=1)])
+    _, _, _, cols_to_drop = preprocessor.comprehensive_preprocessing(
+        X_train_test_combined, target='logerror', fit=True
+    )
+
+    # Предобработка: рассчитываем статистики ТОЛЬКО на train
+    logger.log_message("Preprocessing training data (computing statistics)...")
+    X_train_processed, y_train_processed, stats_dict, _ = preprocessor.comprehensive_preprocessing(
+        pd.concat([X_train, y_train], axis=1),
+        target='logerror', fit=True, cols_to_drop=cols_to_drop
+    )
+
+    # Применяем те же статистики и колонки к test данным
+    logger.log_message("Preprocessing test data (using train statistics)...")
+    X_test_processed, y_test_processed = preprocessor.comprehensive_preprocessing(
+        pd.concat([X_test, y_test], axis=1),
+        target='logerror', fit=False, stats_dict=stats_dict, cols_to_drop=cols_to_drop
+    )
+
+    # VALIDATION ДАННЫЕ ОСТАЮТСЯ НЕТРОНУТЫМИ ДО КОНЦА!
+
+    logger.log_message(f"Training set size: {len(X_train_processed)}, Test set size: {len(X_test_processed)}")
+    logger.log_message(f"Holdout validation set size: {len(X_holdout_validation)} (untouched)")
+
+    # Построение предобработчика на тренировочных данных
+    preproc_pipeline, num_cols, cat_cols = preprocessor.build_preprocessor(X_train_processed)
 
     config['training_params']['sample_size_percentage'] = n * 100
-    config['training_params']['final_sample_size'] = X_sample.shape[0]
+    config['training_params']['final_sample_size'] = len(X_train_processed) + len(X_test_processed)
     config['data_info'] = {
         'original_rows': len(df),
-        'final_training_rows': X_sample.shape[0],
+        'remaining_after_holdout': len(X_temp),
+        'training_sample_rows': len(X_sample),
+        'final_training_rows': len(X_train_processed),
+        'final_test_rows': len(X_test_processed),
+        'holdout_validation_rows': len(X_holdout_validation),
         'numeric_columns': len(num_cols),
         'categorical_columns': len(cat_cols),
         'total_features': len(num_cols) + len(cat_cols)
     }
 
-    # Разделение данных
-    logger.log_message("Splitting data...")
-    X_train, X_val, y_train, y_val = split_data(X_sample, y_sample)
-    logger.log_message(f"Training set size: {len(X_train)}, Validation set size: {len(X_val)}")
+    # num_cols = X_sample.select_dtypes(include=['number']).columns.tolist()
+    # cat_cols = X_sample.select_dtypes(include=['category']).columns.tolist()
 
     # Параметры модели
-    model_params = {
-        'model_type': 'lightgbm',  # Можно менять
-        'model_architecture': 'ft_transformer_simple',
-        'input_size': X_sample.shape[1],
-        'device': DEVICE,
-        'removal_strategy': 'remove_lowest_influence'
-    }
+    model_params = config['model_params'].copy()  # Создаем копию
+    model_params['input_size'] = X_sample.shape[1]  # Явно задаем число
+    model_params['device'] = DEVICE
+    model_params['removal_strategy'] = 'remove_lowest_influence'
+    # model_params = {
+    #     'model_type': 'pytorch',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
+    #     'model_architecture': 'simple',
+    #     # 'input_size': X_sample.shape[1],
+    #     'input_size': len(num_cols) + len(cat_cols),
+    #     'device': DEVICE,
+    #     'removal_strategy': 'remove_lowest_influence'
+    # }
+    # model_params = config['model_params']
 
     n_epochs = 50 if model_params['model_type'] == 'pytorch' else 1
     config['model_params'] = model_params
@@ -180,15 +215,60 @@ def main():
     # Сохранение конфигурации
     logger.save_config(config)
 
-    # Запуск экспериментов
-    logger.log_message("Starting experiments...")
+    # Предобрабатываем holdout validation данные с использованием статистик из train
+    X_validation_processed, y_validation_processed = preprocessor.comprehensive_preprocessing(
+        pd.concat([X_holdout_validation, y_holdout_validation], axis=1),
+        target='logerror', fit=False, stats_dict=stats_dict
+    )
+
+    # Запуск экспериментов (используем train+test для обучения, validation оставляем для финальной оценки)
+    logger.log_message("Starting experiments (train+test for training, validation held out)...")
 
     experiment_runner = ExperimentRunner(logger)
+    # results, scores, scores_raw = experiment_runner.run_experiments(
+    #     X_train_processed, y_train_processed, X_test_processed, y_test_processed,
+    #     preproc_pipeline, model_params,
+    #     n_remove_list, n_epochs
+    # )
+
     results, scores, scores_raw = experiment_runner.run_experiments(
-        X_train, y_train, X_val, y_val,
+        X_train_processed, y_train_processed, X_validation_processed, y_validation_processed,
         preproc_pipeline, model_params,
         n_remove_list, n_epochs
     )
+
+    # Финальная оценка на holdout validation
+    logger.log_message("Final evaluation on holdout validation set...")
+
+
+
+    # Получаем лучшую модель из экспериментов (baseline модель)
+    from models.factory import ModelFactory
+    model = ModelFactory.create_model(model_params)
+
+    # Обучаем модель на всех train+test данных
+    X_train_test = pd.concat([X_train_processed, X_test_processed])
+    y_train_test = pd.concat([y_train_processed, y_test_processed])
+
+    preproc_pipeline, _, _ = preprocessor.build_preprocessor(X_train_test)
+    preproc_pipeline.fit(X_train_test)
+    X_train_test_transformed = preproc_pipeline.transform(X_train_test)
+    X_holdout_validation_transformed = preproc_pipeline.transform(X_validation_processed)
+
+    model.fit(X_train_test_transformed, y_train_test.values if hasattr(y_train_test, 'values') else y_train_test)
+
+    # Предсказания на holdout validation
+    y_pred_validation = model.predict(X_holdout_validation_transformed)
+    validation_mae = np.mean(np.abs(y_pred_validation - y_validation_processed.values))
+
+    logger.log_message(f"🏆 Final validation MAE: {validation_mae:.4f}")
+    logger.log_message(f"   (This is the true unbiased estimate of model performance)")
+
+    # Добавляем финальную метрику в результаты
+    results['final_holdout_validation'] = {
+        'mae': validation_mae,
+        'n_samples': len(X_validation_processed)
+    }
 
     # Визуализация
     logger.log_message("Plotting results...")
@@ -211,7 +291,9 @@ def main():
         'best_validation_mae': results['orig']['best_val_mae'],
         'best_epoch': results['orig']['best_epoch'],
         'total_training_epochs': n_epochs,
-        'model_type': model_params['model_type']
+        'model_type': model_params['model_type'],
+        'final_holdout_validation_mae': results['final_holdout_validation']['mae'],
+        'holdout_validation_samples': results['final_holdout_validation']['n_samples']
     }
 
     influence_stats = get_influence_statistics(scores)

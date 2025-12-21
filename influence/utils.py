@@ -67,6 +67,23 @@ def _extract_numeric_values_from_result(result):
 
     result_array = np.asarray(numeric)
 
+    # Detect sentinel fail_score values (e.g., +/-1e6 used by scorers) and neutralize them
+    try:
+        sentinel_mask = np.abs(result_array) > 9e5
+        if np.any(sentinel_mask):
+            debug_print(f"Detected sentinel fail_score values for {int(np.sum(sentinel_mask))} items, replacing with NaN for robust stats")
+            # Log sample of original items that produced extreme values
+            try:
+                large_idx = np.where(sentinel_mask)[0][:10]
+                for idx in large_idx:
+                    debug_print(f"Large sentinel at index {idx}: value={result_array[idx]}, original_item_type={type(items_list[idx])}, repr={repr(items_list[idx])[:500]}")
+            except Exception:
+                pass
+            result_array[sentinel_mask] = np.nan
+    except Exception:
+        # If something goes wrong with sentinel detection, continue gracefully
+        pass
+
     if len(result_array) > 0:
         finite_mask = np.isfinite(result_array)
         if np.any(finite_mask):

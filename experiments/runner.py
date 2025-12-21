@@ -32,7 +32,7 @@ class ExperimentRunner:
             X_val_transformed = X_val_transformed.toarray()
 
         # Создание модели
-        model = ModelFactory.create_model(model_params)
+        model = ModelFactory.create_model(**model_params)
 
         history = {'train': [], 'val': [], 'best_epoch': 0, 'best_val_mae': float('inf')}
 

@@ -14,8 +14,17 @@ class DataPreprocessor:
         self.logger = logger
         self.preprocessor = None
 
-    def comprehensive_preprocessing(self, df: pd.DataFrame, target: str = 'logerror'):
-        """Комплексная предобработка данных"""
+    def comprehensive_preprocessing(self, df: pd.DataFrame, target: str = 'logerror',
+                                   fit: bool = True, stats_dict: dict = None,
+                                   cols_to_drop: list = None):
+        """Комплексная предобработка данных
+
+        Args:
+            df: DataFrame для предобработки
+            target: название целевой переменной
+            fit: если True, рассчитывать статистики на данных; если False, использовать stats_dict
+            stats_dict: словарь со статистиками для применения (используется когда fit=False)
+        """
         if self.logger:
             self.logger.start_timing("preprocessing")
             self.logger.log_message("Starting simplified preprocessing...")
@@ -25,10 +34,14 @@ class DataPreprocessor:
         original_shape = df.shape
         debug_print(f"Original shape: {original_shape}")
 
+        if fit:
+            stats_dict = {}
+
         # 1. Handling missing values
         debug_print("1. Handling missing values...")
-        missing_frac = df.isna().mean()
-        cols_to_drop = missing_frac[missing_frac >= 0.7].index.tolist()
+        if cols_to_drop is None:
+            missing_frac = df.isna().mean()
+            cols_to_drop = missing_frac[missing_frac >= 0.7].index.tolist()
         df = df.drop(columns=cols_to_drop)
         debug_print(f"Dropped {len(cols_to_drop)} columns with >70% missing values")
 
@@ -57,11 +70,33 @@ class DataPreprocessor:
         # 5. Filling missing values
         debug_print("5. Filling missing values...")
         numeric_cols = df.select_dtypes(include=['number']).columns
-        df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
+
+        if fit:
+            # Рассчитываем статистики на тренировочных данных
+            numeric_medians = df[numeric_cols].median()
+            df[numeric_cols] = df[numeric_cols].fillna(numeric_medians)
+            stats_dict = {'numeric_medians': numeric_medians}
+        else:
+            # Используем сохраненные статистики
+            if stats_dict is None:
+                raise ValueError("stats_dict must be provided when fit=False")
+            df[numeric_cols] = df[numeric_cols].fillna(stats_dict['numeric_medians'])
 
         categorical_cols = df.select_dtypes(include=['category']).columns
         for col in categorical_cols:
-            df[col] = df[col].fillna(df[col].mode()[0])
+            if fit:
+                # Рассчитываем моду на тренировочных данных
+                mode_val = df[col].mode()
+                if not mode_val.empty:
+                    df[col] = df[col].fillna(mode_val[0])
+                    if stats_dict is None:
+                        stats_dict = {}
+                    stats_dict[f'categorical_mode_{col}'] = mode_val[0]
+            else:
+                # Используем сохраненную моду
+                if stats_dict is None or f'categorical_mode_{col}' not in stats_dict:
+                    raise ValueError(f"Mode for column {col} not found in stats_dict")
+                df[col] = df[col].fillna(stats_dict[f'categorical_mode_{col}'])
 
         # 6. Final cleanup
         debug_print("6. Final cleanup...")
@@ -89,7 +124,10 @@ class DataPreprocessor:
             self.logger.end_timing("preprocessing")
             self.logger.log_message("Preprocessing completed!")
 
-        return X, y
+        if fit:
+            return X, y, stats_dict, cols_to_drop
+        else:
+            return X, y
 
     def build_preprocessor(self, X: pd.DataFrame):
         """Построение пайплайна предобработки"""
