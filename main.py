@@ -36,10 +36,10 @@ def main():
     # Проверка GPU
     gpu_available = check_gpu_availability()
     if gpu_available:
-        logger.log_message(f"✅ GPU detected: {torch.cuda.get_device_name(0)}")
+        logger.log_message(f"GPU detected: {torch.cuda.get_device_name(0)}")
         logger.log_message(f"   CUDA version: {torch.version.cuda}")
     else:
-        logger.log_message("⚠️ GPU not available, using CPU")
+        logger.log_message("GPU not available, using CPU")
         logger.log_message("   To use GPU, ensure CUDA-compatible GPU and PyTorch with CUDA support are installed")
 
     # Конфигурация эксперимента
@@ -53,7 +53,7 @@ def main():
             'submission': 'sample_submission.csv'
         },
         'model_params': {
-            'model_type': 'lightgbm',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
+            'model_type': 'pytorch',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
             'model_architecture': 'simple',  # Для pytorch: simple, improved или ft_transformer
             'input_size': 'auto',
             'device': DEVICE,
@@ -83,7 +83,7 @@ def main():
     df, df_subs = data_loader.load_and_merge_data(PROP_PATH, TRAIN_PATH, SUB_PATH)
 
     # Информация о данных
-    logger.log_message(f"📁 File sizes:")
+    logger.log_message(f"File sizes:")
     if os.path.exists(PROP_PATH):
         logger.log_message(f"   {PROP_PATH}: {os.path.getsize(PROP_PATH) / (1024 * 1024):.1f} MB")
     if os.path.exists(TRAIN_PATH):
@@ -91,13 +91,13 @@ def main():
     if SUB_PATH and os.path.exists(SUB_PATH):
         logger.log_message(f"   {SUB_PATH}: {os.path.getsize(SUB_PATH) / (1024 * 1024):.1f} MB")
 
-    logger.log_message(f"\n📊 DATA SIZE DIAGNOSTICS:")
+    logger.log_message(f"\nDATA SIZE DIAGNOSTICS:")
     logger.log_message(f"   Original dataset size: {len(df)} rows, {len(df.columns)} columns")
     
     # Проверка потери данных при merge
     df_train_check = pd.read_csv(TRAIN_PATH)
     if len(df) < len(df_train_check):
-        logger.log_message(f"⚠️ Lost {len(df_train_check) - len(df):,} rows in merge (no matching properties)")
+        logger.log_message(f"Lost {len(df_train_check) - len(df):,} rows in merge (no matching properties)")
 
     # СНАЧАЛА ОТДЕЛЯЕМ HOLDOUT VALIDATION ОТ ПОЛНОГО ДАТАСЕТА
     logger.log_message("Creating holdout validation set from full dataset...")
@@ -160,6 +160,15 @@ def main():
     # Построение предобработчика на тренировочных данных
     preproc_pipeline, num_cols, cat_cols = preprocessor.build_preprocessor(X_train_processed)
 
+    # Временно обучаем предобработчик на небольшой выборке для определения размерности выхода
+    sample_size = min(1000, len(X_train_processed))
+    X_sample_for_fitting = X_train_processed.head(sample_size)
+    preproc_pipeline.fit(X_sample_for_fitting)
+    X_transformed_sample = preproc_pipeline.transform(X_sample_for_fitting)
+    if hasattr(X_transformed_sample, 'toarray'):
+        X_transformed_sample = X_transformed_sample.toarray()
+    actual_input_size = X_transformed_sample.shape[1]
+
     config['training_params']['sample_size_percentage'] = n * 100
     config['training_params']['final_sample_size'] = len(X_train_processed) + len(X_test_processed)
     config['data_info'] = {
@@ -171,7 +180,8 @@ def main():
         'holdout_validation_rows': len(X_holdout_validation),
         'numeric_columns': len(num_cols),
         'categorical_columns': len(cat_cols),
-        'total_features': len(num_cols) + len(cat_cols)
+        'total_features': len(num_cols) + len(cat_cols),
+        'preprocessed_features': actual_input_size
     }
 
     # num_cols = X_sample.select_dtypes(include=['number']).columns.tolist()
@@ -179,7 +189,7 @@ def main():
 
     # Параметры модели
     model_params = config['model_params'].copy()  # Создаем копию
-    model_params['input_size'] = X_sample.shape[1]  # Явно задаем число
+    model_params['input_size'] = actual_input_size  # Используем размерность после предобработки
     model_params['device'] = DEVICE
     model_params['removal_strategy'] = 'remove_lowest_influence'
     # model_params = {
@@ -206,7 +216,7 @@ def main():
     logger.log_message(f"Training epochs: {n_epochs}")
 
     # Список процентов удаления
-    n_remove_list = np.linspace(2, 100, 50, dtype=int).tolist()
+    n_remove_list = np.linspace(2, 100, 33, dtype=int).tolist()
     config['experiment_params'] = {
         'n_remove_percentages': n_remove_list,
         'removal_strategy': model_params['removal_strategy']
@@ -261,7 +271,7 @@ def main():
     y_pred_validation = model.predict(X_holdout_validation_transformed)
     validation_mae = np.mean(np.abs(y_pred_validation - y_validation_processed.values))
 
-    logger.log_message(f"🏆 Final validation MAE: {validation_mae:.4f}")
+    logger.log_message(f"Final validation MAE: {validation_mae:.4f}")
     logger.log_message(f"   (This is the true unbiased estimate of model performance)")
 
     # Добавляем финальную метрику в результаты

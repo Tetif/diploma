@@ -18,7 +18,7 @@ class ExperimentLogger:
         self.config_file = self.experiment_dir / "config.json"
         self.timings = {}
 
-        print(f"📁 Experiment directory: {self.experiment_dir}")
+        print(f"Experiment directory: {self.experiment_dir}")
 
     def _create_experiment_dir(self, base_dir, experiment_name):
         """Создает вложенную структуру папок: дата/время/название"""
@@ -64,7 +64,7 @@ class ExperimentLogger:
         """Сохраняет график в папку эксперимента"""
         plot_path = self.experiment_dir / f"{plot_name}.png"
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        self.log_message(f"📊 Plot saved: {plot_name}.png")
+        self.log_message(f"Plot saved: {plot_name}.png")
 
     def save_results(self, results, scores, scores_raw, n_remove_list):
         """Сохраняет результаты в pickle файл"""
@@ -81,14 +81,14 @@ class ExperimentLogger:
         with open(self.results_file, 'wb') as f:
             pickle.dump(data_to_save, f)
 
-        self.log_message(f"💾 Results saved: {self.results_file}")
+        self.log_message(f"Results saved: {self.results_file}")
 
     def save_config(self, config):
         """Сохраняет конфигурацию эксперимента в JSON"""
         with open(self.config_file, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
 
-        self.log_message(f"⚙️  Config saved: {self.config_file}")
+        self.log_message(f"Config saved: {self.config_file}")
 
     def _calculate_total_experiment_time(self):
         """Вычисляет общее время эксперимента как сумму всех этапов"""
@@ -204,7 +204,7 @@ class ExperimentLogger:
             f.write("-" * 40 + "\n")
             f.write(f"{self.experiment_dir}\n")
 
-        self.log_message(f"📋 Summary saved: {summary_file}")
+        self.log_message(f"Summary saved: {summary_file}")
 
     def get_experiment_dir(self):
         """Возвращает путь к папке эксперимента"""

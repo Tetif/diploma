@@ -57,7 +57,7 @@ def check_gpu_availability():
             memory_total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             print(f"   GPU memory: {memory_total:.2f} GB")
     else:
-        print("⚠️ GPU not available, using CPU")
+        print("GPU not available, using CPU")
         print("   To enable GPU:")
         print("   1. Install PyTorch with CUDA support: pip install torch --index-url https://download.pytorch.org/whl/cu118")
         print("   2. Ensure you have NVIDIA GPU with CUDA support")

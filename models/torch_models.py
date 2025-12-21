@@ -94,6 +94,7 @@ class PyTorchModelWrapper(BaseModel):
 
     def __init__(self, input_size, model_architecture='simple', device=DEVICE, **kwargs):
         super().__init__()
+        self.input_size = input_size
         self.device = device
         self.model_architecture = model_architecture
 
@@ -137,6 +138,7 @@ class PyTorchModelWrapper(BaseModel):
     def get_params(self, deep=True):
         """Возвращает параметры модели (совместимость с sklearn)"""
         return {
+            'input_size': self.input_size,
             'model_architecture': self.model_architecture,
             'device': self.device
         }
