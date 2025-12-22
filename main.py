@@ -202,7 +202,7 @@ def main():
     # }
     # model_params = config['model_params']
 
-    n_epochs = 50 if model_params['model_type'] == 'pytorch' else 1
+    n_epochs = 500 if model_params['model_type'] == 'pytorch' else 1
     config['model_params'] = model_params
     config['training_params']['n_epochs'] = n_epochs
 
@@ -285,10 +285,7 @@ def main():
     logger.save_results(results, scores, scores_raw, n_remove_list)
 
     # Визуализация распределения influence scores
-    plot_influence_distribution(scores, "normalized", logger)
-    plt.show()
-
-    plot_influence_distribution(scores_raw, "raw", logger)
+    plot_influence_distribution(scores_raw, "influence_scores", logger)
     plt.show()
 
     # Визуализация результатов экспериментов
@@ -306,7 +303,7 @@ def main():
         'holdout_validation_samples': results['final_holdout_validation']['n_samples']
     }
 
-    influence_stats = get_influence_statistics(scores)
+    influence_stats = get_influence_statistics(scores_raw)
     logger.generate_summary(config, model_metrics, influence_stats, scores, scores_raw)
 
     logger.log_message("Program completed successfully!")

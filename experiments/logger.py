@@ -145,7 +145,7 @@ class ExperimentLogger:
                 f.write(f"{key}: {value}\n")
 
             f.write("\n" + "=" * 80 + "\n")
-            f.write("INFLUENCE METHOD STATISTICS (NORMALIZED):\n")
+            f.write("INFLUENCE METHOD STATISTICS:\n")
             f.write("-" * 40 + "\n")
             for method_name, stats in influence_stats.items():
                 f.write(f"\n{method_name}:\n")
@@ -156,7 +156,7 @@ class ExperimentLogger:
             f.write("DETAILED SCORE STATISTICS:\n")
             f.write("-" * 40 + "\n")
 
-            f.write("\nNORMALIZED SCORES (0-1 range):\n")
+            f.write("\nSCORES:\n")
             for method_name, values in scores.items():
                 if len(values) > 0:
                     f.write(f"\n{method_name}:\n")

@@ -72,6 +72,21 @@ class InfluenceMethods:
         scorer_callable = ScorerFactory.create_scorer('neg_mae')
         model_wrapper = pipeline.named_steps['model']
 
+        # Проверяем, что модель обучена перед созданием scorer
+        if hasattr(model_wrapper, 'estimators_'):
+            if model_wrapper.estimators_ is None or len(model_wrapper.estimators_) == 0:
+                self.logger.log_message("WARNING: RandomForest model not properly fitted before creating scorer!")
+                # Попытка переобучить модель на тренировочных данных
+                if self.logger:
+                    self.logger.log_message("Attempting to refit model on training data...")
+                try:
+                    model_wrapper.fit(X_train_t, y_train_1d)
+                    if self.logger:
+                        self.logger.log_message("Model refitted successfully")
+                except Exception as e:
+                    if self.logger:
+                        self.logger.log_message(f"Failed to refit model: {e}")
+
         supervised_scorer = SupervisedScorer(
             scoring=scorer_callable,
             test_data=val_dataset,
@@ -83,8 +98,7 @@ class InfluenceMethods:
             model=model_wrapper,
             scorer=supervised_scorer,
             show_warnings=True,
-            # Clone model before each fit to avoid in-place state pollution (e.g., empty estimators_)
-            clone_before_fit=True
+            clone_before_fit=True  # Изменено на True для клонирования модели перед каждым fit
         )
 
         # Определение методов для использования
@@ -305,40 +319,47 @@ class InfluenceMethods:
                         debug_print(f"Failed to log raw influence diagnostics: {e}")
 
                     scores_raw[name] = per_train.copy()
-
-                    # Нормализация
-                    if per_train.size == 0:
-                        scaled = np.array([])
-                    elif per_train.max() > per_train.min():
-                        scaled = (per_train - per_train.min()) / (per_train.max() - per_train.min() + 1e-10)
-                    else:
-                        scaled = np.ones_like(per_train) * 0.5
-
-                    # Additional checks on normalized values
-                    if self.logger and scaled.size > 0:
-                        self.logger.log_message(
-                            f"Influence NORMALIZED stats - min={scaled.min():.6g}, max={scaled.max():.6g}, mean={scaled.mean():.6g}, std={scaled.std():.6g}"
-                        )
-
-                    scores[name] = scaled
+                    scores[name] = per_train.copy()
 
                 else:
                     # Вычисление для других методов
                     with parallel_config(backend="threading", n_jobs=N_JOBS):
-                        result = method.fit(train_dataset)
-
-                    # Log raw result for diagnostics (truncated)
-                    try:
-                        if self.logger:
-                            self.logger.log_message(f"{name}: raw result type={type(result)}, len={len(result) if hasattr(result, '__len__') else 'unknown'}")
-                            self.logger.log_message(f"{name}: raw result repr (truncated): {repr(result)[:1000]}")
-                        else:
-                            debug_print(f"{name}: raw result type={type(result)}, len={len(result) if hasattr(result, '__len__') else 'unknown'}")
-                            debug_print(f"{name}: raw result repr (truncated): {repr(result)[:1000]}")
-                    except Exception as e:
-                        debug_print(f"Failed to log raw result for {name}: {e}")
+                        try:
+                            result = method.fit(train_dataset)
+                            if result is None:
+                                if self.logger:
+                                    self.logger.log_message(f"WARNING: {name} method returned None result")
+                                scores[name] = np.zeros(len(X_train_t))
+                                scores_raw[name] = np.zeros(len(X_train_t))
+                                continue
+                        except Exception as fit_e:
+                            if self.logger:
+                                self.logger.log_message(f"ERROR: Failed to fit {name} method: {fit_e}")
+                            scores[name] = np.zeros(len(X_train_t))
+                            scores_raw[name] = np.zeros(len(X_train_t))
+                            continue
 
                     values_arr = _extract_numeric_values_from_result(result)
+
+                    # Проверяем, что получили правильное количество значений
+                    if len(values_arr) == 0:
+                        if self.logger:
+                            self.logger.log_message(f"WARNING: {name} method returned no values")
+                        scores[name] = np.zeros(len(X_train_t))
+                        scores_raw[name] = np.zeros(len(X_train_t))
+                        continue
+
+                    expected_len = len(X_train_t)
+                    if len(values_arr) != expected_len:
+                        if self.logger:
+                            self.logger.log_message(f"WARNING: {name} returned {len(values_arr)} values, expected {expected_len}")
+                            if len(values_arr) < expected_len:
+                                # Дополняем нулями
+                                padding = np.zeros(expected_len - len(values_arr))
+                                values_arr = np.concatenate([values_arr, padding])
+                            else:
+                                # Обрезаем до нужной длины
+                                values_arr = values_arr[:expected_len]
 
                     # Diagnostic logging about extracted values
                     try:
@@ -365,8 +386,8 @@ class InfluenceMethods:
                         debug_print(f"Failed to log extracted values diagnostics for {name}: {e}")
 
                     if values_arr.size == 0:
-                        debug_print(f"WARNING: No values extracted for {name}, using uniform")
-                        scores[name] = np.ones(len(X_train_t)) * 0.5
+                        debug_print(f"WARNING: No values extracted for {name}, using zeros")
+                        scores[name] = np.zeros(len(X_train_t))
                         scores_raw[name] = np.array([])
                         continue
 
@@ -383,90 +404,21 @@ class InfluenceMethods:
                         fill_val = np.median(finite_vals) if finite_vals.size > 0 else 0.0
                         values_arr[~finite_mask] = fill_val
 
-                    abs_vals = np.abs(values_arr)
-                    max_abs = np.max(abs_vals) if len(abs_vals) > 0 else 1.0
-
-                    if max_abs < 1e-10:
-                        debug_print(f"WARNING: All values for {name} are near zero, using uniform distribution")
-                        scores[name] = np.ones(len(values_arr)) * 0.5
-                        continue
-                    elif max_abs < 1e-6:
-                        debug_print(f"WARNING: Values for {name} are very small, scaling up for better precision")
-                        scale_factor = 1e6 / max_abs if max_abs > 0 else 1e6
-                        if self.logger:
-                            self.logger.log_message(f"{name}: scaling small values (max_abs={max_abs:.6g}) by factor {scale_factor:.6g}")
-                        values_arr = values_arr * scale_factor
-                        debug_print(f"Scaled values by {scale_factor:.2f}")
-
-                    positive_vals = values_arr[values_arr > 0]
-                    negative_vals = values_arr[values_arr < 0]
-                    zero_vals = values_arr[values_arr == 0]
-
-                    if self.logger:
-                        self.logger.log_message(
-                            f"{name} value distribution: {len(positive_vals)} positive, {len(negative_vals)} negative, {len(zero_vals)} zero"
-                        )
-
-                    # Нормализация с использованием рангов
-                    if len(positive_vals) > 0 and len(negative_vals) > 0:
-                        debug_print("Mixed positive/negative values - using signed rank normalization")
-                        signed_ranks = rankdata(np.abs(values_arr), method="average") * np.sign(values_arr)
-                        min_rank = np.min(signed_ranks)
-                        max_rank = np.max(signed_ranks)
-                        if max_rank > min_rank:
-                            scaled = (signed_ranks - min_rank) / (max_rank - min_rank)
-                        else:
-                            scaled = np.ones_like(signed_ranks) * 0.5
-                    else:
-                        try:
-                            ranks = rankdata(values_arr, method="average")
-                            if len(values_arr) > 1:
-                                scaled = (ranks - 1) / (len(values_arr) - 1)
-                            else:
-                                scaled = np.ones_like(ranks) * 0.5
-                            debug_print(f"Standard rank normalization successful for {name}")
-                        except Exception as e:
-                            debug_print(f"Rank normalization failed for {name}: {e}, using winsorized min-max")
-                            lo = np.percentile(values_arr, 5)
-                            hi = np.percentile(values_arr, 95)
-                            vals_clip = np.clip(values_arr, lo, hi)
-                            if hi > lo:
-                                scaled = (vals_clip - lo) / (hi - lo)
-                            else:
-                                scaled = np.ones_like(vals_clip) * 0.5
-
-                    # Log normalized diagnostics
-                    if self.logger:
-                        try:
-                            if scaled.size > 0:
-                                self.logger.log_message(
-                                    f"{name} NORMALIZED stats - min={scaled.min():.6g}, max={scaled.max():.6g}, mean={scaled.mean():.6g}, std={scaled.std():.6g}"
-                                )
-                                idx_sorted = np.argsort(scaled)
-                                top_idx = idx_sorted[-5:][::-1]
-                                bot_idx = idx_sorted[:5]
-                                self.logger.log_message(f"{name} normalized top 5 (idx:value): {[(int(i), float(scaled[i])) for i in top_idx]}")
-                        except Exception as e:
-                            debug_print(f"Failed to log normalized diagnostics for {name}: {e}")
-
-                    scores[name] = scaled
+                    scores[name] = values_arr.copy()
 
                 # Логирование результатов
                 if self.logger:
                     final_scores = scores[name]
                     raw_scores = scores_raw[name]
                     self.logger.log_message(
-                        f"FINAL {name} - min: {final_scores.min():.6f}, max: {final_scores.max():.6f}, "
+                        f"{name} scores - min: {final_scores.min():.6f}, max: {final_scores.max():.6f}, "
                         f"mean: {final_scores.mean():.6f}, std: {final_scores.std():.6f}"
                     )
                     if len(raw_scores) > 0:
                         self.logger.log_message(
-                            f"RAW {name} - min: {raw_scores.min():.6f}, max: {raw_scores.max():.6f}, "
+                            f"{name} raw scores - min: {raw_scores.min():.6f}, max: {raw_scores.max():.6f}, "
                             f"mean: {raw_scores.mean():.6f}, std: {raw_scores.std():.6f}"
                         )
-                    
-                    if np.allclose(final_scores, 0.5, atol=0.01):
-                        debug_print(f"WARNING: All {name} scores are ~0.5 - this indicates a problem!")
 
             except Exception as e:
                 if self.logger:
@@ -474,8 +426,8 @@ class InfluenceMethods:
                     import traceback
                     self.logger.log_message(traceback.format_exc())
 
-                # В случае ошибки используем равномерное распределение
-                scores[name] = np.ones(len(X_train_t)) * 0.5
+                # В случае ошибки используем нули
+                scores[name] = np.zeros(len(X_train_t))
                 scores_raw[name] = np.zeros(len(X_train_t))
 
             if self.logger:
