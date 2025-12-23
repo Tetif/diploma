@@ -16,7 +16,20 @@ PYDVL_CONFIG = {
     'n_steps': 10,
     'rtol': 0.1,
     'max_updates': 100,  # Уменьшено для скорости (было 100)
-    'beta_shapley_params': {'alpha': 0.1, 'beta': 0.1}
+    'beta_shapley_params': {'alpha': 0.1, 'beta': 0.1},
+    # Настройки для новых valuation методов
+    'tmc_shapley_params': {'n_samples': 10},
+    'knn_shapley_params': {'n_neighbors': 5},
+    'banzhaf_params': {'n_samples': 10},
+    'least_core_params': {'epsilon': 0.1, 'n_samples': 10},
+    # Настройки для новых influence методов
+    'influence_params': {
+        'regularization': 1e-2,
+        'lissa_params': {'scale': 10, 'damping': 0.0},
+        'cg_params': {'maxiter': 10, 'tolerance': 1e-2},
+        'arnoldi_params': {'rank': 10},
+        'nystroem_params': {'rank': 10}
+    }
 }
 
 # Настройки моделей

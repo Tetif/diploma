@@ -8,12 +8,17 @@ from scipy.stats import rankdata
 from pydvl.valuation.dataset import Dataset
 from pydvl.valuation.utility import ModelUtility
 from pydvl.valuation.scorers import SupervisedScorer
-from pydvl.valuation.methods.loo import LOOValuation
-from pydvl.valuation.methods.shapley import ShapleyValuation
-from pydvl.valuation.methods.beta_shapley import BetaShapleyValuation
+from pydvl.valuation.methods import (
+    LOOValuation, ShapleyValuation, BetaShapleyValuation,
+    BanzhafValuation, TMCShapleyValuation, KNNShapleyValuation,
+    DataOOBValuation, LeastCoreValuation
+)
 from pydvl.valuation.samplers import PermutationSampler
 from pydvl.valuation.stopping import HistoryDeviation, MaxUpdates
-from pydvl.influence.torch import DirectInfluence
+from pydvl.influence.torch import (
+    DirectInfluence, ArnoldiInfluence, CgInfluence,
+    LissaInfluence, NystroemSketchInfluence
+)
 from pydvl.influence import InfluenceMode
 
 from experiments.logger import debug_print
@@ -104,26 +109,37 @@ class InfluenceMethods:
         # Определение методов для использования
         if methods_to_use is None:
             methods_to_use = [
-                # 'LOO'
+                'LOO'
                 # , 'DataShapley'
                 # , 'BetaShapley'
-                              ]  # Начинаем только с LOO
+                , 'Banzhaf'
+                , 'TMCShapley'
+                # , 'KNNShapley'  # Только для классификации
+                # , 'DataOOB'     # Требует специальной настройки
+                # , 'LeastCore'
+                              ]  # Добавлены новые методы для тестирования
 
             # Проверяем, является ли модель PyTorch моделью или дистиллированной
             is_pytorch = (hasattr(model_wrapper, 'model') and isinstance(getattr(model_wrapper, 'model', None), torch.nn.Module)) or \
                          (hasattr(model_wrapper, 'student_model') and isinstance(getattr(model_wrapper, 'student_model', None), torch.nn.Module))
             if is_pytorch:
-                methods_to_use.append('Influence')
+                methods_to_use.extend([
+                    'Influence',
+                    'ArnoldiInfluence',
+                    # 'CgInfluence',
+                    'LissaInfluence',
+                    # 'NystroemSketchInfluence'
+                ])
 
             # Добавляем Shapley методы только если не дистилляция (слишком медленно)
             is_distilled = hasattr(model_wrapper, 'student_model')
             # if not is_distilled:
             #     methods_to_use.extend(['DataShapley', 'BetaShapley'])
 
-        # Инициализация методов
-        try:
-            with parallel_config(backend="threading", n_jobs=N_JOBS):
-                for method_name in methods_to_use:
+        # Инициализация методов - каждый метод в отдельном try-except блоке
+        with parallel_config(backend="threading", n_jobs=N_JOBS):
+            for method_name in methods_to_use:
+                try:
                     if method_name == 'LOO':
                         if self.logger:
                             self.logger.start_timing("LOO_setup")
@@ -164,6 +180,53 @@ class InfluenceMethods:
                         if self.logger:
                             self.logger.end_timing("BetaShapley_setup")
 
+                    elif method_name == 'Banzhaf':
+                        if self.logger:
+                            self.logger.start_timing("Banzhaf_setup")
+                        self.methods['Banzhaf'] = BanzhafValuation(
+                            utility=utility,
+                            sampler=PermutationSampler(truncation=None, seed=42),
+                            is_done=MaxUpdates(PYDVL_CONFIG['banzhaf_params']['n_samples']),
+                            progress=True
+                        )
+                        if self.logger:
+                            self.logger.end_timing("Banzhaf_setup")
+
+                    elif method_name == 'TMCShapley':
+                        if self.logger:
+                            self.logger.start_timing("TMCShapley_setup")
+                        self.methods['TMCShapley'] = TMCShapleyValuation(
+                            utility=utility,
+                            is_done=MaxUpdates(PYDVL_CONFIG['tmc_shapley_params']['n_samples']),
+                            progress=True
+                        )
+                        if self.logger:
+                            self.logger.end_timing("TMCShapley_setup")
+
+                    elif method_name == 'KNNShapley':
+                        # KNNShapleyValuation требует KNeighborsClassifier, пропускаем для регрессии
+                        if self.logger:
+                            self.logger.log_message("KNNShapley skipped - requires KNeighborsClassifier (classification only)")
+                        continue
+
+                    elif method_name == 'DataOOB':
+                        # DataOOBValuation требует BaggingModel, сложно настроить для произвольных моделей
+                        if self.logger:
+                            self.logger.log_message("DataOOB skipped - requires BaggingModel setup")
+                        continue
+
+                    elif method_name == 'LeastCore':
+                        if self.logger:
+                            self.logger.start_timing("LeastCore_setup")
+                        self.methods['LeastCore'] = LeastCoreValuation(
+                            utility=utility,
+                            epsilon=PYDVL_CONFIG['least_core_params']['epsilon'],
+                            n_samples=PYDVL_CONFIG['least_core_params']['n_samples'],
+                            progress=True
+                        )
+                        if self.logger:
+                            self.logger.end_timing("LeastCore_setup")
+
                     elif method_name == 'Influence':
                         if self.logger:
                             self.logger.start_timing("Influence_setup")
@@ -186,10 +249,97 @@ class InfluenceMethods:
                         if self.logger:
                             self.logger.end_timing("Influence_setup")
 
-        except Exception as e:
-            debug_print(f"Error initializing methods: {e}")
-            import traceback
-            debug_print(traceback.format_exc())
+                    elif method_name == 'ArnoldiInfluence':
+                        if self.logger:
+                            self.logger.start_timing("ArnoldiInfluence_setup")
+
+                        influence_model = getattr(model_wrapper, "student_model", None)
+                        if influence_model is None:
+                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+
+                        if hasattr(influence_model, 'eval'):
+                            influence_model.eval()
+
+                        self.methods['ArnoldiInfluence'] = ArnoldiInfluence(
+                            influence_model,
+                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            rank=PYDVL_CONFIG['influence_params']['arnoldi_params']['rank'],
+                            regularization=PYDVL_CONFIG['influence_params']['regularization']
+                        )
+                        if self.logger:
+                            self.logger.end_timing("ArnoldiInfluence_setup")
+
+                    elif method_name == 'CgInfluence':
+                        if self.logger:
+                            self.logger.start_timing("CgInfluence_setup")
+
+                        influence_model = getattr(model_wrapper, "student_model", None)
+                        if influence_model is None:
+                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+
+                        if hasattr(influence_model, 'eval'):
+                            influence_model.eval()
+
+                        self.methods['CgInfluence'] = CgInfluence(
+                            influence_model,
+                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            maxiter=PYDVL_CONFIG['influence_params']['cg_params']['maxiter'],
+                            tolerance=PYDVL_CONFIG['influence_params']['cg_params']['tolerance'],
+                            regularization=PYDVL_CONFIG['influence_params']['regularization']
+                        )
+                        if self.logger:
+                            self.logger.end_timing("CgInfluence_setup")
+
+                    elif method_name == 'LissaInfluence':
+                        if self.logger:
+                            self.logger.start_timing("LissaInfluence_setup")
+
+                        influence_model = getattr(model_wrapper, "student_model", None)
+                        if influence_model is None:
+                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+
+                        if hasattr(influence_model, 'eval'):
+                            influence_model.eval()
+
+                        self.methods['LissaInfluence'] = LissaInfluence(
+                            influence_model,
+                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            scale=PYDVL_CONFIG['influence_params']['lissa_params']['scale'],
+                            dampen=PYDVL_CONFIG['influence_params']['lissa_params']['damping'],
+                            regularization=PYDVL_CONFIG['influence_params']['regularization']
+                        )
+                        if self.logger:
+                            self.logger.end_timing("LissaInfluence_setup")
+
+                    elif method_name == 'NystroemSketchInfluence':
+                        if self.logger:
+                            self.logger.start_timing("NystroemSketchInfluence_setup")
+
+                        influence_model = getattr(model_wrapper, "student_model", None)
+                        if influence_model is None:
+                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+
+                        if hasattr(influence_model, 'eval'):
+                            influence_model.eval()
+
+                        self.methods['NystroemSketchInfluence'] = NystroemSketchInfluence(
+                            influence_model,
+                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            rank=PYDVL_CONFIG['influence_params']['nystroem_params']['rank'],
+                            regularization=PYDVL_CONFIG['influence_params']['regularization']
+                        )
+                        if self.logger:
+                            self.logger.end_timing("NystroemSketchInfluence_setup")
+
+                except Exception as e:
+                    if self.logger:
+                        self.logger.log_message(f"ERROR initializing {method_name}: {type(e).__name__}: {e}")
+                        import traceback
+                        self.logger.log_message(f"Traceback for {method_name}: {traceback.format_exc()}")
+                    else:
+                        debug_print(f"Error initializing {method_name}: {e}")
+                        import traceback
+                        debug_print(traceback.format_exc())
 
         if self.logger:
             self.logger.log_message("Methods initialization completed!")
@@ -241,7 +391,7 @@ class InfluenceMethods:
                 self.logger.log_message(f"\n--- Computing {name} scores ---")
 
             try:
-                if name == 'Influence':
+                if name in ['Influence', 'ArnoldiInfluence', 'CgInfluence', 'LissaInfluence', 'NystroemSketchInfluence']:
                     # Вычисление влияния для PyTorch моделей
                     train_loader = DataLoader(
                         TensorDataset(
@@ -342,7 +492,7 @@ class InfluenceMethods:
                     scores[name] = per_train.copy()
 
                 else:
-                    # Вычисление для других методов
+                    # Вычисление для valuation методов
                     with parallel_config(backend="threading", n_jobs=N_JOBS):
                         try:
                             result = method.fit(train_dataset)

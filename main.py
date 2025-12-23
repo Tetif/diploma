@@ -53,7 +53,7 @@ def main():
             'submission': 'sample_submission.csv'
         },
         'model_params': {
-            'model_type': 'random_forest',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
+            'model_type': 'xgboost',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
             'model_architecture': 'simple',  # Для pytorch: simple, improved или ft_transformer
             'input_size': 'auto',
             'device': DEVICE,
@@ -118,7 +118,7 @@ def main():
     logger.log_message(f"Holdout validation set created: {len(X_holdout_validation)} rows (untouched)")
 
     # Теперь от оставшихся 80% данных берем подвыборку для эффективного обучения
-    n = 1
+    n = 0.01
     logger.log_message(f"Taking {n * 100}% sample from remaining {len(X_temp)} rows for training...")
     X_sample, y_sample = sample_data(X_temp, y_temp, sample_fraction=n)
 
@@ -197,7 +197,7 @@ def main():
     model_params = config['model_params'].copy()  # Создаем копию
     model_params['input_size'] = actual_input_size  # Используем размерность после предобработки
     model_params['device'] = DEVICE
-    model_params['removal_strategy'] = 'remove_lowest_influence'
+    model_params['removal_strategy'] = 'remove_highest_influence'
     # Добавляем параметры дистилляции
     model_params.update({
         'use_distillation': config['distillation_config']['use_distillation'],

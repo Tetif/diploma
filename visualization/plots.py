@@ -58,23 +58,35 @@ def plot_results_enhanced(results, n_remove_list, logger=None):
 
     plt.figure(figsize=(14, 8))
 
-    # Базовые цвета (приглушенные)
+    # Расширенные базовые цвета (приглушенные)
     base_colors = {
         'Baseline': '#000000B3',
         'LOO': '#2ecc7199',
+        'Banzhaf': '#1f77b499',
+        'TMCShapley': '#ff7f0e99',
         'DataShapley': '#3498db99',
         'BetaShapley': '#e74c3c99',
         'Influence': '#9b59b699',
+        'ArnoldiInfluence': '#d6272899',
+        'CgInfluence': '#9467bd99',
+        'LissaInfluence': '#8c564b99',
+        'NystroemSketchInfluence': '#e377c299',
         'random': '#f39c1299'
     }
 
-    # Яркие цвета для трендовых линий
+    # Расширенные яркие цвета для трендовых линий
     trend_colors = {
         'Baseline': '#000000',
         'LOO': '#2ecc71',
+        'Banzhaf': '#1f77b4',
+        'TMCShapley': '#ff7f0e',
         'DataShapley': '#3498db',
         'BetaShapley': '#e74c3c',
         'Influence': '#9b59b6',
+        'ArnoldiInfluence': '#d62728',
+        'CgInfluence': '#9467bd',
+        'LissaInfluence': '#8c564b',
+        'NystroemSketchInfluence': '#e377c2',
         'random': '#f39c12'
     }
 
@@ -85,7 +97,28 @@ def plot_results_enhanced(results, n_remove_list, logger=None):
         plt.plot([0], [baseline_mae], 'o-', color=base_colors['Baseline'],
                  alpha=0.3, linewidth=1, markersize=6)
 
-    methods = ['LOO', 'DataShapley', 'BetaShapley', 'Influence', 'random']
+    # Автоматически определяем все доступные методы из результатов
+    all_keys = set(results.keys())
+    methods = []
+
+    # Извлекаем названия методов из ключей результатов
+    for key in all_keys:
+        if key.startswith(('LOO_', 'DataShapley_', 'BetaShapley_', 'Influence_', 'Banzhaf_', 'TMCShapley_', 'ArnoldiInfluence_', 'CgInfluence_', 'LissaInfluence_', 'NystroemSketchInfluence_')):
+            method_name = key.split('_')[0]
+            if method_name not in methods:
+                methods.append(method_name)
+        elif key == 'random' or key.startswith('random_'):
+            if 'random' not in methods:
+                methods.append('random')
+
+    # Сортируем методы для консистентности
+    method_order = ['LOO', 'Banzhaf', 'TMCShapley', 'DataShapley', 'BetaShapley', 'Influence', 'ArnoldiInfluence', 'CgInfluence', 'LissaInfluence', 'NystroemSketchInfluence', 'random']
+    methods = sorted(methods, key=lambda x: method_order.index(x) if x in method_order else len(method_order))
+
+    if logger:
+        logger.log_message(f"Detected methods for plotting: {methods}")
+    else:
+        debug_print(f"Detected methods for plotting: {methods}")
 
     for method in methods:
         mae_values = []
@@ -106,7 +139,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None):
                 x_valid = [x_points[i] for i in valid_indices]
                 y_valid = [mae_values[i] for i in valid_indices]
                 plt.plot(x_valid, y_valid, 'o-',
-                         color=base_colors[method], alpha=0.3, linewidth=1,
+                         color=base_colors.get(method, '#99999999'), alpha=0.3, linewidth=1,
                          markersize=4, label=f'{method} (raw)')
 
     for method in methods:
@@ -137,7 +170,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None):
 
             x_smooth = [x_points[i] for i in clean_indices[:len(smoothed)]]
             plt.plot(x_smooth, smoothed, '-',
-                     color=trend_colors[method], alpha=0.9, linewidth=3,
+                     color=trend_colors.get(method, '#999999'), alpha=0.9, linewidth=3,
                      label=f'{method} (trend)')
 
     if 'orig' in results:
