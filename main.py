@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 
 from config.settings import (
     DEBUG_MODE, EXPERIMENTS_BASE_DIR, DEVICE,
-    EXPERIMENT_CONFIG, MODEL_CONFIGS, CACHE_DIR, USE_CACHE
+    EXPERIMENT_CONFIG, MODEL_CONFIGS, CACHE_DIR, USE_CACHE, DISTILLATION_CONFIG
 )
 from experiments.logger import ExperimentLogger
 from data.loader import DataLoader as DataLoaderClass
@@ -53,13 +53,19 @@ def main():
             'submission': 'sample_submission.csv'
         },
         'model_params': {
-            'model_type': 'pytorch',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
+            'model_type': 'random_forest',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
             'model_architecture': 'simple',  # Для pytorch: simple, improved или ft_transformer
             'input_size': 'auto',
             'device': DEVICE,
-            'removal_strategy': 'remove_highest_influence'
+            'removal_strategy': 'remove_highest_influence',
+            # Параметры дистилляции
+            'use_distillation': DISTILLATION_CONFIG['use_distillation'],
+            'distillation_epochs': DISTILLATION_CONFIG['distillation_epochs'],
+            'temperature': DISTILLATION_CONFIG['temperature'],
+            'student_architecture': DISTILLATION_CONFIG['student_architecture']
         },
-        'training_params': EXPERIMENT_CONFIG.copy()
+        'training_params': EXPERIMENT_CONFIG.copy(),
+        'distillation_config': DISTILLATION_CONFIG.copy()
     }
 
     # Загрузка данных
@@ -112,7 +118,7 @@ def main():
     logger.log_message(f"Holdout validation set created: {len(X_holdout_validation)} rows (untouched)")
 
     # Теперь от оставшихся 80% данных берем подвыборку для эффективного обучения
-    n = 0.001
+    n = 1
     logger.log_message(f"Taking {n * 100}% sample from remaining {len(X_temp)} rows for training...")
     X_sample, y_sample = sample_data(X_temp, y_temp, sample_fraction=n)
 
@@ -192,6 +198,13 @@ def main():
     model_params['input_size'] = actual_input_size  # Используем размерность после предобработки
     model_params['device'] = DEVICE
     model_params['removal_strategy'] = 'remove_lowest_influence'
+    # Добавляем параметры дистилляции
+    model_params.update({
+        'use_distillation': config['distillation_config']['use_distillation'],
+        'distillation_epochs': config['distillation_config']['distillation_epochs'],
+        'temperature': config['distillation_config']['temperature'],
+        'student_architecture': config['distillation_config']['student_architecture']
+    })
     # model_params = {
     #     'model_type': 'pytorch',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
     #     'model_architecture': 'simple',
@@ -202,7 +215,12 @@ def main():
     # }
     # model_params = config['model_params']
 
-    n_epochs = 500 if model_params['model_type'] == 'pytorch' else 1
+    # Определяем количество эпох в зависимости от типа модели и использования дистилляции
+    if model_params['model_type'] == 'pytorch' or model_params.get('use_distillation', False):
+        n_epochs = 500  # Меньше эпох для PyTorch и дистиллированных моделей
+    else:
+        n_epochs = 1  # 1 эпоха для tree-based моделей
+
     config['model_params'] = model_params
     config['training_params']['n_epochs'] = n_epochs
 
@@ -213,6 +231,10 @@ def main():
     
     logger.log_message(f"Using device: {DEVICE}")
     logger.log_message(f"Using model: {model_params['model_type']}")
+    logger.log_message(f"Using distillation: {model_params.get('use_distillation', False)}")
+    if model_params.get('use_distillation', False):
+        logger.log_message(f"Distillation epochs: {model_params.get('distillation_epochs', 50)}")
+        logger.log_message(f"Student architecture: {model_params.get('student_architecture', 'simple')}")
     logger.log_message(f"Training epochs: {n_epochs}")
 
     # Список процентов удаления
@@ -299,6 +321,9 @@ def main():
         'best_epoch': results['orig']['best_epoch'],
         'total_training_epochs': n_epochs,
         'model_type': model_params['model_type'],
+        'used_distillation': model_params.get('use_distillation', False),
+        'distillation_epochs': model_params.get('distillation_epochs', 0) if model_params.get('use_distillation', False) else 0,
+        'student_architecture': model_params.get('student_architecture', 'none') if model_params.get('use_distillation', False) else 'none',
         'final_holdout_validation_mae': results['final_holdout_validation']['mae'],
         'holdout_validation_samples': results['final_holdout_validation']['n_samples']
     }

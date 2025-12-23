@@ -68,8 +68,8 @@ class ExperimentRunner:
                     self.logger.log_message(f"Loaded best PyTorch model from epoch {history['best_epoch'] + 1}")
 
         else:
-            # Для tree-based моделей
-            if model_params.get('model_type') == 'lightgbm':
+            # Для tree-based моделей и дистиллированных моделей
+            if model_params.get('model_type') == 'lightgbm' or model_params.get('use_distillation', False):
                 train_loss = model.fit(X_train_transformed, y_train.values,
                                        X_val=X_val_transformed, y_val=y_val.values)
             else:

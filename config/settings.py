@@ -1,7 +1,7 @@
 import torch
 
 # Глобальные флаги для отладки
-DEBUG_MODE = True
+DEBUG_MODE = False
 EXPERIMENTS_BASE_DIR = "experiment_logs"
 CACHE_DIR = "data_cache"  # Папка для кэширования предобработанных данных
 USE_CACHE = True  # Использовать ли кэш предобработанных данных
@@ -15,7 +15,7 @@ RANDOM_STATE = 42
 PYDVL_CONFIG = {
     'n_steps': 10,
     'rtol': 0.1,
-    'max_updates': 100,
+    'max_updates': 100,  # Уменьшено для скорости (было 100)
     'beta_shapley_params': {'alpha': 0.1, 'beta': 0.1}
 }
 
@@ -95,10 +95,18 @@ MODEL_CONFIGS = {
     }
 }
 
+# Настройки дистилляции
+DISTILLATION_CONFIG = {
+    'use_distillation': True,  # Включить дистилляцию для не-нейросетевых моделей
+    'distillation_epochs': 50,  # Количество эпох для дистилляции
+    'temperature': 2.0,  # Температура для дистилляции (пока не используется)
+    'student_architecture': 'simple'  # Архитектура студенческой модели: 'simple' или 'improved'
+}
+
 # Настройки экспериментов
 EXPERIMENT_CONFIG = {
     'test_size': 0.2,
-    'n_epochs': 50,
+    'n_epochs': 500,
     'sample_size_percentage': 1.0,
     'n_remove_list': list(range(2, 101, 2)),  # 2%, 4%, ..., 100%
     'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']

@@ -103,13 +103,22 @@ class InfluenceMethods:
 
         # Определение методов для использования
         if methods_to_use is None:
-            methods_to_use = ['LOO', 'DataShapley', 'BetaShapley']
+            methods_to_use = [
+                # 'LOO'
+                # , 'DataShapley'
+                # , 'BetaShapley'
+                              ]  # Начинаем только с LOO
 
-            # Проверяем, является ли модель PyTorch моделью
-            is_pytorch = hasattr(model_wrapper, 'model') and isinstance(getattr(model_wrapper, 'model', None),
-                                                                        torch.nn.Module)
+            # Проверяем, является ли модель PyTorch моделью или дистиллированной
+            is_pytorch = (hasattr(model_wrapper, 'model') and isinstance(getattr(model_wrapper, 'model', None), torch.nn.Module)) or \
+                         (hasattr(model_wrapper, 'student_model') and isinstance(getattr(model_wrapper, 'student_model', None), torch.nn.Module))
             if is_pytorch:
                 methods_to_use.append('Influence')
+
+            # Добавляем Shapley методы только если не дистилляция (слишком медленно)
+            is_distilled = hasattr(model_wrapper, 'student_model')
+            # if not is_distilled:
+            #     methods_to_use.extend(['DataShapley', 'BetaShapley'])
 
         # Инициализация методов
         try:
@@ -158,10 +167,21 @@ class InfluenceMethods:
                     elif method_name == 'Influence':
                         if self.logger:
                             self.logger.start_timing("Influence_setup")
+
+                        # Для дистиллированных моделей используем student_model
+                        influence_model = getattr(model_wrapper, "student_model", None)
+                        if influence_model is None:
+                            # Для обычных PyTorch моделей используем model
+                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+
+                        # Переключаем модель в eval режим для избежания случайных операций
+                        if hasattr(influence_model, 'eval'):
+                            influence_model.eval()
+
                         self.methods['Influence'] = DirectInfluence(
-                            getattr(model_wrapper, "model", model_wrapper),
+                            influence_model,
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
-                            regularization=1e-4
+                            regularization=1e-6
                         )
                         if self.logger:
                             self.logger.end_timing("Influence_setup")
@@ -228,7 +248,7 @@ class InfluenceMethods:
                             torch.FloatTensor(X_train_t),
                             torch.FloatTensor(y_train_arr.reshape(-1, 1))
                         ),
-                        batch_size=32,
+                        batch_size=1,
                         shuffle=False
                     )
 

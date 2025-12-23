@@ -1,5 +1,5 @@
 from .tree_models import LightGBMModel, XGBoostModel, RandomForestModel, CatBoostModel
-from .torch_models import PyTorchModelWrapper
+from .torch_models import PyTorchModelWrapper, DistilledModelWrapper
 from config.settings import DEVICE
 
 
@@ -25,14 +25,36 @@ class ModelFactory:
         input_size = model_params.get('input_size')
         device = model_params.get('device', DEVICE)
         model_architecture = model_params.get('model_architecture', 'simple')
+        use_distillation = model_params.get('use_distillation', False)
+        distillation_epochs = model_params.get('distillation_epochs', 50)
 
         if model_type == 'lightgbm':
+            if use_distillation:
+                base_model = LightGBMModel()
+                if input_size is None:
+                    raise ValueError("Для дистиллированной модели требуется input_size")
+                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
             return LightGBMModel()
         elif model_type == 'xgboost':
+            if use_distillation:
+                base_model = XGBoostModel()
+                if input_size is None:
+                    raise ValueError("Для дистиллированной модели требуется input_size")
+                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
             return XGBoostModel()
         elif model_type == 'random_forest':
+            if use_distillation:
+                base_model = RandomForestModel()
+                if input_size is None:
+                    raise ValueError("Для дистиллированной модели требуется input_size")
+                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
             return RandomForestModel()
         elif model_type == 'catboost':
+            if use_distillation:
+                base_model = CatBoostModel()
+                if input_size is None:
+                    raise ValueError("Для дистиллированной модели требуется input_size")
+                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
             return CatBoostModel()
         elif model_type == 'pytorch':
             if input_size is None:
