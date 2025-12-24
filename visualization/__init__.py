@@ -11,3 +11,5 @@ __all__ = [
     'plot_training_history'
 ]
 
+# Timing analysis module is available as a separate import
+

@@ -161,10 +161,10 @@ def plot_results_enhanced(results, n_remove_list, logger=None):
         if len(clean_mae) > 1:
             window_size = min(3, len(clean_mae))
             if window_size > 1:
-                smoothed = np.convolve(clean_mae, np.ones(window_size) / window_size, mode='valid')
-
-                pad_size = len(clean_mae) - len(smoothed)
-                smoothed = np.concatenate([clean_mae[:pad_size], smoothed])
+                smoothed = np.convolve(clean_mae, np.ones(window_size) / window_size, mode='same')
+                # Заменяем крайние точки на оригинальные значения для точности
+                smoothed[0] = clean_mae[0]
+                smoothed[-1] = clean_mae[-1]
             else:
                 smoothed = clean_mae
 
