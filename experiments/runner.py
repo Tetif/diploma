@@ -128,21 +128,27 @@ class ExperimentRunner:
                                                               preprocessor, X_val, y_val, pipeline)
 
         # Эксперименты с удалением данных
-        removal_strategy = model_params.get('removal_strategy', 'remove_lowest_influence')
-
         for method, vals in scores.items():
             if self.logger:
                 self.logger.log_message(f"\nProcessing method: {method}")
 
             self.results[f'{method}_0'] = self.results['orig']  # 0% удаления - baseline
 
-            if removal_strategy == 'remove_lowest_influence':
-                idx_sorted = np.argsort(vals)
-            elif removal_strategy == 'remove_highest_influence':
-                idx_sorted = np.argsort(vals)
-                idx_sorted = idx_sorted[::-1]
+            # Выбираем стратегию удаления в зависимости от типа метода
+            # Для influence методов удаляем наиболее влиятельные (highest influence)
+            # Для остальных методов удаляем наименее влиятельные (lowest influence)
+            is_influence_method = method in ['Influence', 'ArnoldiInfluence', 'CgInfluence', 'LissaInfluence', 'NystroemSketchInfluence']
+
+            if is_influence_method:
+                # Для influence методов: удаляем наиболее влиятельные (самые высокие значения)
+                idx_sorted = np.argsort(vals)[::-1]  # descending order
+                if self.logger:
+                    self.logger.log_message(f"  Using remove_highest_influence strategy for {method}")
             else:
-                raise ValueError(f"Unknown removal strategy: {removal_strategy}")
+                # Для остальных методов: удаляем наименее влиятельные (самые низкие значения)
+                idx_sorted = np.argsort(vals)  # ascending order
+                if self.logger:
+                    self.logger.log_message(f"  Using remove_lowest_influence strategy for {method}")
 
             for pct in n_remove_list:
                 if self.logger:

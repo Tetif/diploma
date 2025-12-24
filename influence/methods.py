@@ -112,8 +112,8 @@ class InfluenceMethods:
                 'LOO'
                 # , 'DataShapley'
                 # , 'BetaShapley'
-                , 'Banzhaf'
-                , 'TMCShapley'
+                # , 'Banzhaf'
+                # , 'TMCShapley'
                 # , 'KNNShapley'  # Только для классификации
                 # , 'DataOOB'     # Требует специальной настройки
                 # , 'LeastCore'
