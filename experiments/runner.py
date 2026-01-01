@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_absolute_error
@@ -16,7 +17,7 @@ class ExperimentRunner:
         self.logger = logger
         self.results = {}
 
-    def train_and_evaluate(self, preprocessor, model_params, X_train, y_train, X_val, y_val, n_epochs=50):
+    def train_and_evaluate(self, preprocessor, model_params, X_train, y_train, X_test, y_test, X_val, y_val, n_epochs=50):
         """Обучение и оценка модели"""
         if self.logger:
             self.logger.start_timing("model_training")
@@ -25,7 +26,7 @@ class ExperimentRunner:
         # Подготовка данных
         preprocessor.fit(X_train)
         X_train_transformed = preprocessor.transform(X_train)
-        X_val_transformed = preprocessor.transform(X_val)
+        X_val_transformed = preprocessor.transform(X_test)
 
         if hasattr(X_train_transformed, 'toarray'):
             X_train_transformed = X_train_transformed.toarray()
@@ -45,7 +46,7 @@ class ExperimentRunner:
                 history['train'].append(train_loss)
 
                 y_pred_val = model.predict(X_val_transformed)
-                val_mae = mean_absolute_error(y_val, y_pred_val)
+                val_mae = mean_absolute_error(y_test, y_pred_val)
                 history['val'].append(val_mae)
 
                 if val_mae < history['best_val_mae']:
@@ -71,21 +72,24 @@ class ExperimentRunner:
             # Для tree-based моделей и дистиллированных моделей
             if model_params.get('model_type') == 'lightgbm' or model_params.get('use_distillation', False):
                 train_loss = model.fit(X_train_transformed, y_train.values,
-                                       X_val=X_val_transformed, y_val=y_val.values)
+                                       X_val=X_val_transformed, y_val=y_test.values)
             else:
                 train_loss = model.fit(X_train_transformed, y_train.values)
 
             history['train'].append(train_loss)
 
             y_pred_val = model.predict(X_val_transformed)
-            val_mae = mean_absolute_error(y_val, y_pred_val)
+            val_mae = mean_absolute_error(y_test, y_pred_val)
             history['val'].append(val_mae)
             history['best_val_mae'] = val_mae
             history['best_epoch'] = 0
 
-        # Финальная оценка
-        y_pred_val = model.predict(X_val_transformed)
-        history['final_mae'] = mean_absolute_error(y_val, y_pred_val)
+        # Финальная оценка на валидационном множестве
+        X_final_transformed = preprocessor.transform(X_test)
+        if hasattr(X_final_transformed, 'toarray'):
+            X_final_transformed = X_final_transformed.toarray()
+        y_pred_final = model.predict(X_final_transformed)
+        history['final_mae'] = mean_absolute_error(y_test, y_pred_final)
 
         if self.logger:
             self.logger.log_message(f"Final validation MAE: {history['final_mae']:.4f}")
@@ -93,7 +97,7 @@ class ExperimentRunner:
 
         return history, model
 
-    def run_experiments(self, X_train, y_train, X_val, y_val,
+    def run_experiments(self, X_train, y_train, X_test, y_test, X_val, y_val,
                         preprocessor, model_params,
                         n_remove_list=None,
                         n_epochs=50):
@@ -104,12 +108,16 @@ class ExperimentRunner:
         if n_remove_list is None:
             n_remove_list = EXPERIMENT_CONFIG['n_remove_list']
 
-        # Обучение базовой модели
-        if self.logger:
-            self.logger.log_message("Training baseline model...")
+        # Комбинируем train и test для обучения (как просил пользователь)
+        # X_combined = pd.concat([X_train, X_test], ignore_index=True)
+        # y_combined = pd.concat([y_train, y_test], ignore_index=True)
+
+        # if self.logger:
+        #     self.logger.log_message(f"Combined training data: {len(X_combined)} samples")
+        #     self.logger.log_message("Training baseline model...")
 
         history, model = self.train_and_evaluate(preprocessor, model_params,
-                                                 X_train, y_train, X_val, y_val, n_epochs)
+                                                 X_train, y_train, X_test, y_test, X_val, y_val, n_epochs)
         self.results['orig'] = history
 
         # Создание пайплайна
@@ -121,11 +129,11 @@ class ExperimentRunner:
         # Настройка методов влияния
         influence_methods = InfluenceMethods(self.logger)
         methods, _ = influence_methods.setup_methods(pipeline, X_train, y_train,
-                                                     X_val, y_val, preprocessor)
+                                                     X_test, y_test, preprocessor)
 
         # Вычисление influence scores
         scores, scores_raw = influence_methods.compute_scores(methods, X_train, y_train,
-                                                              preprocessor, X_val, y_val, pipeline)
+                                                              preprocessor, X_test, y_test, pipeline)
 
         # Эксперименты с удалением данных
         for method, vals in scores.items():
@@ -171,7 +179,7 @@ class ExperimentRunner:
 
                 key = f'{method}_{pct}pct'
                 history, _ = self.train_and_evaluate(preprocessor, model_params,
-                                                     X_sub, y_sub, X_val, y_val, n_epochs)
+                                                     X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs)
                 self.results[key] = history
 
         # Случайное удаление (контрольный эксперимент)
@@ -199,7 +207,7 @@ class ExperimentRunner:
 
             key = f'random_{pct}pct'
             history, _ = self.train_and_evaluate(preprocessor, model_params,
-                                                 X_sub, y_sub, X_val, y_val, n_epochs)
+                                                 X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs)
             self.results[key] = history
 
         if self.logger:

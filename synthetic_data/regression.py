@@ -18,6 +18,7 @@ from pydvl.influence.torch import DirectInfluence
 from pydvl.influence import InfluenceMode
 from joblib import parallel_config
 import os
+from config.settings import SYNTHETIC_DATA_CONFIG, RANDOM_STATE
 from scipy.stats import rankdata
 import warnings
 
@@ -43,9 +44,9 @@ outlier_fracs = [0.01, 0.5]
 outlier_sigma = 10.0
 x_range = (-10, 10)
 train_frac = 0.8
-batch_size = 128
-lr = 1e-3
-n_epochs = 10
+batch_size = SYNTHETIC_DATA_CONFIG['batch_size']
+lr = SYNTHETIC_DATA_CONFIG['learning_rate']
+n_epochs = SYNTHETIC_DATA_CONFIG['n_epochs']
 ns = [10, 100, 500]
 
 
@@ -412,7 +413,7 @@ def get_influence_methods(model_wrapper, X_train, y_train, X_val, y_val):
     methods = {}
 
     try:
-        with parallel_config(backend="threading", n_jobs=1):
+        with parallel_config(backend="threading", n_jobs=SYNTHETIC_DATA_CONFIG['n_jobs']):
             debug_print("Initializing LOO...")
             methods['LOO'] = LOOValuation(
                 utility=utility,
@@ -638,7 +639,7 @@ def compute_influence_scores(methods, X_train, y_train, X_val, y_val):
             else:
                 # Для Shapley методов
                 debug_print(f"Using {name} method with utility...")
-                with parallel_config(backend="threading", n_jobs=1):
+                with parallel_config(backend="threading", n_jobs=SYNTHETIC_DATA_CONFIG['n_jobs']):
                     debug_print("Fitting valuation method...")
                     result = method.fit(train_dataset)
                     debug_print(f"Result type: {type(result)}")

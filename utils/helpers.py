@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.model_selection import train_test_split
+from config.settings import RANDOM_STATE, EXPERIMENT_CONFIG
 
 
 def set_random_seeds(seed=42):
@@ -13,8 +14,13 @@ def set_random_seeds(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-def sample_data(X, y, sample_fraction=0.01, random_state=42):
+def sample_data(X, y, sample_fraction=None, random_state=None):
     """Выборка данных"""
+    if sample_fraction is None:
+        sample_fraction = EXPERIMENT_CONFIG.get('default_sample_fraction', 0.01)
+    if random_state is None:
+        random_state = RANDOM_STATE
+
     if sample_fraction >= 1.0:
         return X, y
 
@@ -35,8 +41,12 @@ def sample_data(X, y, sample_fraction=0.01, random_state=42):
     return X_sample, y_sample
 
 
-def split_data(X, y, test_size=0.2, random_state=42):
+def split_data(X, y, test_size=None, random_state=None):
     """Разделение данных на train/validation"""
+    if test_size is None:
+        test_size = EXPERIMENT_CONFIG.get('test_size', 0.2)
+    if random_state is None:
+        random_state = RANDOM_STATE
     return train_test_split(X, y, test_size=test_size, random_state=random_state)
 
 

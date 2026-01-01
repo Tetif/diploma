@@ -147,7 +147,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None):
 # Получаем путь к директории скрипта и строим абсолютный путь к файлу
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)  # поднимаемся на уровень выше от experiments/
-results_path = os.path.join(project_root, "experiment_logs", "2025-12-24", "02-31-40", "results.pkl")
+results_path = os.path.join(project_root, "experiment_logs", "2025-12-29", "03-41-33", "results.pkl")
 
 results, scores, n_remove_list = load_results_pickle(results_path)
 plot_results_enhanced(results, n_remove_list)

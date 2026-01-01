@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 
 from config.settings import (
     DEBUG_MODE, EXPERIMENTS_BASE_DIR, DEVICE,
-    EXPERIMENT_CONFIG, MODEL_CONFIGS, CACHE_DIR, USE_CACHE, DISTILLATION_CONFIG
+    EXPERIMENT_CONFIG, MODEL_CONFIGS, CACHE_DIR, USE_CACHE, DISTILLATION_CONFIG, RANDOM_STATE
 )
 from experiments.logger import ExperimentLogger
 from data.loader import DataLoader as DataLoaderClass
@@ -53,7 +53,7 @@ def main():
             'submission': 'sample_submission.csv'
         },
         'model_params': {
-            'model_type': 'xgboost',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
+            'model_type': 'lightgbm',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
             'model_architecture': 'simple',  # Для pytorch: simple, improved или ft_transformer
             'input_size': 'auto',
             'device': DEVICE,
@@ -112,13 +112,13 @@ def main():
 
     # Отделяем 20% данных для holdout validation - эти данные БОЛЬШЕ НИКОГДА НЕ ИСПОЛЬЗУЮТСЯ
     X_temp, X_holdout_validation, y_temp, y_holdout_validation = train_test_split(
-        X_full, y_full, test_size=0.2, random_state=42
+        X_full, y_full, test_size=EXPERIMENT_CONFIG['val_size'], random_state=RANDOM_STATE
     )
 
     logger.log_message(f"Holdout validation set created: {len(X_holdout_validation)} rows (untouched)")
 
     # Теперь от оставшихся 80% данных берем подвыборку для эффективного обучения
-    n = 1
+    n = EXPERIMENT_CONFIG['sample_size_percentage'] / 100.0
     logger.log_message(f"Taking {n * 100}% sample from remaining {len(X_temp)} rows for training...")
     X_sample, y_sample = sample_data(X_temp, y_temp, sample_fraction=n)
 
@@ -127,7 +127,7 @@ def main():
     # Разделяем подвыборку на train и test для обучения моделей
     logger.log_message("Splitting training sample into train/test sets...")
     X_train, X_test, y_train, y_test = train_test_split(
-        X_sample, y_sample, test_size=0.25, random_state=42
+        X_sample, y_sample, test_size=EXPERIMENT_CONFIG['test_size'], random_state=RANDOM_STATE
     )
 
     logger.log_message(f"Final data split:")
@@ -238,7 +238,8 @@ def main():
     logger.log_message(f"Training epochs: {n_epochs}")
 
     # Список процентов удаления
-    n_remove_list = np.linspace(2, 100, 33, dtype=int).tolist()
+    n_remove_list = np.linspace(1, 99, 33, dtype=int).tolist()
+
     config['experiment_params'] = {
         'n_remove_percentages': n_remove_list,
         'removal_strategy': model_params['removal_strategy']
@@ -264,7 +265,7 @@ def main():
     # )
 
     results, scores, scores_raw = experiment_runner.run_experiments(
-        X_train_processed, y_train_processed, X_validation_processed, y_validation_processed,
+        X_train_processed, y_train_processed, X_test_processed, y_test_processed, X_validation_processed, y_validation_processed,
         preproc_pipeline, model_params,
         n_remove_list, n_epochs
     )

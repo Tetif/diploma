@@ -14,6 +14,7 @@ warnings.filterwarnings('ignore')
 
 from pydvl.influence.torch import DirectInfluence
 from pydvl.influence import InfluenceMode
+from config.settings import SYNTHETIC_DATA_CONFIG, RANDOM_STATE
 
 # Конфигурация
 # n_points = 1000
@@ -24,7 +25,7 @@ from pydvl.influence import InfluenceMode
 # n_features = 2
 # train_frac = 0.8
 # batch_size = 128
-# lr = 1e-3
+# lr = SYNTHETIC_DATA_CONFIG['learning_rate']
 # n_epochs = 10
 # ns = [10, 50, 100, 200, 300]
 
@@ -36,9 +37,9 @@ separation = 2.0
 n_classes = 2
 n_features = 2
 train_frac = 0.8
-batch_size = 32
-lr = 1e-3
-n_epochs = 5
+batch_size = SYNTHETIC_DATA_CONFIG['batch_size']
+lr = SYNTHETIC_DATA_CONFIG['learning_rate']
+n_epochs = SYNTHETIC_DATA_CONFIG['n_epochs']
 ns = [10, 100, 200]
 
 # Словарь для хранения информации о флипнутых точках

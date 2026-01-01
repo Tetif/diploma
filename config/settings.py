@@ -14,8 +14,8 @@ RANDOM_STATE = 42
 # Настройки pyDVL
 PYDVL_CONFIG = {
     'n_steps': 10,
-    'rtol': 0.1,
-    'max_updates': 100,  # Уменьшено для скорости (было 100)
+    'rtol': 0.01,
+    'max_updates': 1000,  # Уменьшено для скорости (было 100)
     'beta_shapley_params': {'alpha': 0.1, 'beta': 0.1},
     # Настройки для новых valuation методов
     'tmc_shapley_params': {'n_samples': 10},
@@ -24,9 +24,10 @@ PYDVL_CONFIG = {
     'least_core_params': {'epsilon': 0.1, 'n_samples': 10},
     # Настройки для новых influence методов
     'influence_params': {
-        'regularization': 1e-2,
-        'lissa_params': {'scale': 10, 'damping': 0.0},
-        'cg_params': {'maxiter': 10, 'tolerance': 1e-2},
+        'regularization': 1e-06,
+        'batch_size': 16,  # Для DataLoader в influence методах
+        'lissa_params': {'scale': 10, 'damping': 0.1},
+        'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
         'arnoldi_params': {'rank': 10},
         'nystroem_params': {'rank': 10}
     }
@@ -57,9 +58,9 @@ MODEL_CONFIGS = {
         'n_jobs': -1
     },
     'catboost': {
-        'iterations': 1000,
+        'iterations': 100,
         'learning_rate': 0.05,
-        'depth': 6,
+        'depth': 10,
         'loss_function': 'MAE',
         'verbose': False,
         'random_state': RANDOM_STATE,
@@ -111,7 +112,7 @@ MODEL_CONFIGS = {
 # Настройки дистилляции
 DISTILLATION_CONFIG = {
     'use_distillation': True,  # Включить дистилляцию для не-нейросетевых моделей
-    'distillation_epochs': 50,  # Количество эпох для дистилляции
+    'distillation_epochs': 200,  # Количество эпох для дистилляции
     'temperature': 2.0,  # Температура для дистилляции (пока не используется)
     'student_architecture': 'simple'  # Архитектура студенческой модели: 'simple' или 'improved'
 }
@@ -119,8 +120,19 @@ DISTILLATION_CONFIG = {
 # Настройки экспериментов
 EXPERIMENT_CONFIG = {
     'test_size': 0.2,
+    'val_size': 0.2,
     'n_epochs': 500,
-    'sample_size_percentage': 1.0,
-    'n_remove_list': list(range(2, 101, 2)),  # 2%, 4%, ..., 100%
+    'sample_size_percentage': 100.0,
+    'n_remove_list': list(range(1, 100, 2)),  # 2%, 4%, ..., 100%
     'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']
+}
+
+# Настройки для synthetic_data экспериментов
+SYNTHETIC_DATA_CONFIG = {
+    'batch_size': 32,
+    'learning_rate': 1e-3,
+    'n_epochs': 10,
+    'hidden_size': 50,
+    'n_estimators': 50,
+    'n_jobs': 1  # Для синтетических данных используем 1 для стабильности
 }

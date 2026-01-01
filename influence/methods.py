@@ -22,7 +22,7 @@ from pydvl.influence.torch import (
 from pydvl.influence import InfluenceMode
 
 from experiments.logger import debug_print
-from config.settings import PYDVL_CONFIG, N_JOBS
+from config.settings import PYDVL_CONFIG, N_JOBS, RANDOM_STATE
 from .scorers import ScorerFactory
 
 
@@ -109,7 +109,7 @@ class InfluenceMethods:
         # Определение методов для использования
         if methods_to_use is None:
             methods_to_use = [
-                'LOO'
+                # 'LOO'
                 # , 'DataShapley'
                 # , 'BetaShapley'
                 # , 'Banzhaf'
@@ -125,10 +125,10 @@ class InfluenceMethods:
             if is_pytorch:
                 methods_to_use.extend([
                     'Influence',
-                    'ArnoldiInfluence',
+                    # 'ArnoldiInfluence',
                     # 'CgInfluence',
                     'LissaInfluence',
-                    # 'NystroemSketchInfluence'
+                    'NystroemSketchInfluence'
                 ])
 
             # Добавляем Shapley методы только если не дистилляция (слишком медленно)
@@ -264,7 +264,8 @@ class InfluenceMethods:
                             influence_model,
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
                             rank=PYDVL_CONFIG['influence_params']['arnoldi_params']['rank'],
-                            regularization=PYDVL_CONFIG['influence_params']['regularization']
+                            regularization=PYDVL_CONFIG['influence_params']['regularization'],
+                            eigen_computation_on_gpu = True
                         )
                         if self.logger:
                             self.logger.end_timing("ArnoldiInfluence_setup")
@@ -284,7 +285,7 @@ class InfluenceMethods:
                             influence_model,
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
                             maxiter=PYDVL_CONFIG['influence_params']['cg_params']['maxiter'],
-                            tolerance=PYDVL_CONFIG['influence_params']['cg_params']['tolerance'],
+                            rtol=PYDVL_CONFIG['influence_params']['cg_params']['tolerance'],
                             regularization=PYDVL_CONFIG['influence_params']['regularization']
                         )
                         if self.logger:
@@ -306,7 +307,10 @@ class InfluenceMethods:
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
                             scale=PYDVL_CONFIG['influence_params']['lissa_params']['scale'],
                             dampen=PYDVL_CONFIG['influence_params']['lissa_params']['damping'],
-                            regularization=PYDVL_CONFIG['influence_params']['regularization']
+                            regularization=PYDVL_CONFIG['influence_params']['regularization'],
+                            rtol=0.1,
+                            maxiter=100,
+                            progress=True
                         )
                         if self.logger:
                             self.logger.end_timing("LissaInfluence_setup")
@@ -398,7 +402,7 @@ class InfluenceMethods:
                             torch.FloatTensor(X_train_t),
                             torch.FloatTensor(y_train_arr.reshape(-1, 1))
                         ),
-                        batch_size=1,
+                        batch_size=PYDVL_CONFIG['influence_params']['batch_size'],
                         shuffle=False
                     )
 

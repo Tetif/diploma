@@ -171,7 +171,8 @@ class DistilledModelWrapper(BaseModel):
         else:
             self.student_model = SimpleNN(input_size, dropout=0.0).to(device)  # Отключаем dropout
 
-        self.optimizer = optim.Adam(self.student_model.parameters(), lr=0.001)
+        self.optimizer = optim.Adam(self.student_model.parameters(),
+                                    lr=MODEL_CONFIGS['pytorch']['simple']['learning_rate'])
         self.criterion = nn.MSELoss()
 
     def fit(self, X, y, epochs=None, X_val=None, y_val=None, **kwargs):

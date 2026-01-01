@@ -8,6 +8,7 @@ from .settings import (
     PYDVL_CONFIG,
     MODEL_CONFIGS,
     EXPERIMENT_CONFIG,
+    SYNTHETIC_DATA_CONFIG,
     CACHE_DIR,
     USE_CACHE
 )
@@ -21,6 +22,7 @@ __all__ = [
     'PYDVL_CONFIG',
     'MODEL_CONFIGS',
     'EXPERIMENT_CONFIG',
+    'SYNTHETIC_DATA_CONFIG',
     'CACHE_DIR',
     'USE_CACHE'
 ]
