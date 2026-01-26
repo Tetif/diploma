@@ -45,7 +45,7 @@ def plot_influence_distribution(scores, plot_name_suffix="", logger=None):
     if logger:
         plot_name = f"influence_distribution{'_' + plot_name_suffix if plot_name_suffix else ''}"
         logger.save_plot(plt, plot_name)
-    
+
     return plt
 
 
@@ -221,5 +221,98 @@ def plot_training_history(history, model_name="Model", logger=None):
 
     if logger:
         logger.save_plot(plt, f"{model_name.lower()}_training_history")
+
+    return plt
+
+
+def plot_combined_comparison(results, n_remove_list, logger=None):
+    """Комбинированный график с двумя метриками на одной оси"""
+    if logger:
+        logger.log_message("Creating combined comparison visualization...")
+
+    plt.figure(figsize=(12, 7))
+
+    colors = plt.cm.Set2.colors
+
+    x_points = [0] + n_remove_list
+
+    # Определяем методы
+    methods = []
+    for key in results.keys():
+        if '_' in key and key != 'orig':
+            method = key.split('_')[0]
+            if method not in methods and not method.startswith('random'):
+                methods.append(method)
+
+    # Для каждого метода строим две линии
+    for idx, method in enumerate(methods):
+        color = colors[idx % len(colors)]
+
+        # Данные для final_mae (holdout validation)
+        final_mae_values = []
+        if 'orig' in results:
+            final_mae_values.append(results['orig']['final_mae'])
+        for pct in n_remove_list:
+            key = f'{method}_{pct}pct'
+            if key in results:
+                final_mae_values.append(results[key]['final_mae'])
+            else:
+                final_mae_values.append(np.nan)
+
+        # Данные для best_val_mae (test during training)
+        test_mae_values = []
+        if 'orig' in results:
+            test_mae_values.append(results['orig']['best_val_mae'])
+        for pct in n_remove_list:
+            key = f'{method}_{pct}pct'
+            if key in results:
+                test_mae_values.append(results[key]['best_val_mae'])
+            else:
+                test_mae_values.append(np.nan)
+
+        # Отображаем линии
+        plt.plot(x_points, final_mae_values, 'o-', color=color, alpha=0.7,
+                 linewidth=2, markersize=6, label=f'{method} (Holdout)')
+        plt.plot(x_points, test_mae_values, 's--', color=color, alpha=0.5,
+                 linewidth=1.5, markersize=4, label=f'{method} (Test)')
+
+    # Добавляем случайное удаление
+    if 'random_10pct' in results:
+        final_random = [results['orig']['final_mae']]
+        test_random = [results['orig']['best_val_mae']]
+        for pct in n_remove_list:
+            key = f'random_{pct}pct'
+            if key in results:
+                final_random.append(results[key]['final_mae'])
+                test_random.append(results[key]['best_val_mae'])
+            else:
+                final_random.append(np.nan)
+                test_random.append(np.nan)
+
+        plt.plot(x_points, final_random, 'o-', color='gray', alpha=0.7,
+                 linewidth=2, markersize=6, label='Random (Holdout)')
+        plt.plot(x_points, test_random, 's--', color='gray', alpha=0.5,
+                 linewidth=1.5, markersize=4, label='Random (Test)')
+
+    plt.xlabel('Percentage of Samples Removed')
+    plt.ylabel('MAE')
+    plt.title('Comparison of Holdout vs Test MAE for Different Removal Methods',
+              fontsize=14, pad=20)
+    plt.xticks(x_points, ['0%'] + [f'{pct}%' for pct in n_remove_list])
+    plt.grid(True, alpha=0.2)
+
+    # Добавляем легенду
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', ncol=2)
+
+    # Добавляем информационный текст
+    plt.figtext(0.5, 0.01,
+                'Solid lines with circles: Holdout Validation (unbiased estimate)\n'
+                'Dashed lines with squares: Test during training (used for model selection)',
+                ha='center', fontsize=10, style='italic', alpha=0.7)
+
+    plt.tight_layout()
+
+    if logger:
+        logger.save_plot(plt, "combined_holdout_vs_test")
 
     return plt

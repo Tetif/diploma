@@ -21,16 +21,15 @@ class ExperimentRunner:
         """Обучение и оценка модели"""
         if self.logger:
             self.logger.start_timing("model_training")
-            self.logger.log_message("Preparing data for training...")
 
         # Подготовка данных
         preprocessor.fit(X_train)
         X_train_transformed = preprocessor.transform(X_train)
-        X_val_transformed = preprocessor.transform(X_test)
+        X_test_transformed = preprocessor.transform(X_test)
 
         if hasattr(X_train_transformed, 'toarray'):
             X_train_transformed = X_train_transformed.toarray()
-            X_val_transformed = X_val_transformed.toarray()
+            X_test_transformed = X_test_transformed.toarray()
 
         # Создание модели
         model = ModelFactory.create_model(**model_params)
@@ -45,8 +44,8 @@ class ExperimentRunner:
                 train_loss = model.fit(X_train_transformed, y_train.values, epochs=1)
                 history['train'].append(train_loss)
 
-                y_pred_val = model.predict(X_val_transformed)
-                val_mae = mean_absolute_error(y_test, y_pred_val)
+                y_pred_test = model.predict(X_test_transformed)
+                val_mae = mean_absolute_error(y_test, y_pred_test)
                 history['val'].append(val_mae)
 
                 if val_mae < history['best_val_mae']:
@@ -72,27 +71,26 @@ class ExperimentRunner:
             # Для tree-based моделей и дистиллированных моделей
             if model_params.get('model_type') == 'lightgbm' or model_params.get('use_distillation', False):
                 train_loss = model.fit(X_train_transformed, y_train.values,
-                                       X_val=X_val_transformed, y_val=y_test.values)
+                                       X_val=X_test_transformed, y_val=y_test.values)
             else:
                 train_loss = model.fit(X_train_transformed, y_train.values)
 
             history['train'].append(train_loss)
 
-            y_pred_val = model.predict(X_val_transformed)
-            val_mae = mean_absolute_error(y_test, y_pred_val)
-            history['val'].append(val_mae)
-            history['best_val_mae'] = val_mae
+            y_pred_test = model.predict(X_test_transformed)
+            test_mae = mean_absolute_error(y_test, y_pred_test)
+            history['val'].append(test_mae)
+            history['best_val_mae'] = test_mae
             history['best_epoch'] = 0
 
         # Финальная оценка на валидационном множестве
-        X_final_transformed = preprocessor.transform(X_test)
+        X_final_transformed = preprocessor.transform(X_val)
         if hasattr(X_final_transformed, 'toarray'):
             X_final_transformed = X_final_transformed.toarray()
         y_pred_final = model.predict(X_final_transformed)
-        history['final_mae'] = mean_absolute_error(y_test, y_pred_final)
+        history['final_mae'] = mean_absolute_error(y_val, y_pred_final)
 
         if self.logger:
-            self.logger.log_message(f"Final validation MAE: {history['final_mae']:.4f}")
             self.logger.end_timing("model_training")
 
         return history, model
@@ -108,19 +106,11 @@ class ExperimentRunner:
         if n_remove_list is None:
             n_remove_list = EXPERIMENT_CONFIG['n_remove_list']
 
-        # Комбинируем train и test для обучения (как просил пользователь)
-        # X_combined = pd.concat([X_train, X_test], ignore_index=True)
-        # y_combined = pd.concat([y_train, y_test], ignore_index=True)
-
-        # if self.logger:
-        #     self.logger.log_message(f"Combined training data: {len(X_combined)} samples")
-        #     self.logger.log_message("Training baseline model...")
 
         history, model = self.train_and_evaluate(preprocessor, model_params,
                                                  X_train, y_train, X_test, y_test, X_val, y_val, n_epochs)
         self.results['orig'] = history
 
-        # Создание пайплайна
         pipeline = Pipeline([
             ('preproc', preprocessor),
             ('model', model)
@@ -149,18 +139,16 @@ class ExperimentRunner:
 
             if is_influence_method:
                 # Для influence методов: удаляем наиболее влиятельные (самые высокие значения)
-                idx_sorted = np.argsort(vals)[::-1]  # descending order
+                idx_sorted = np.argsort(vals)[::-1]
                 if self.logger:
                     self.logger.log_message(f"  Using remove_highest_influence strategy for {method}")
             else:
                 # Для остальных методов: удаляем наименее влиятельные (самые низкие значения)
-                idx_sorted = np.argsort(vals)  # ascending order
+                idx_sorted = np.argsort(vals)
                 if self.logger:
                     self.logger.log_message(f"  Using remove_lowest_influence strategy for {method}")
 
             for pct in n_remove_list:
-                if self.logger:
-                    self.logger.log_message(f"  Removing {pct}% of samples...")
 
                 n_to_remove = int(len(X_train) * pct / 100)
                 n_to_remove = max(1, n_to_remove)
@@ -182,13 +170,11 @@ class ExperimentRunner:
                                                      X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs)
                 self.results[key] = history
 
-        # Случайное удаление (контрольный эксперимент)
+        # Случайное удаление
         if self.logger:
             self.logger.log_message("Processing random removal...")
 
         for pct in n_remove_list:
-            if self.logger:
-                self.logger.log_message(f"  Randomly removing {pct}% of samples...")
 
             n_to_remove = int(len(X_train) * pct / 100)
             n_to_remove = max(1, n_to_remove)
@@ -221,7 +207,7 @@ class ExperimentRunner:
                               removal_strategy='remove_lowest_influence',
                               influence_scores=None,
                               n_epochs=50):
-        """Запуск одиночного эксперимента"""
+
         if removal_percentage > 0:
             if influence_scores is None:
                 raise ValueError("Influence scores required for non-zero removal")

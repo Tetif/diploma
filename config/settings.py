@@ -9,20 +9,20 @@ USE_CACHE = True  # Использовать ли кэш предобработ�
 # Настройки вычислений
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 N_JOBS = 8
-RANDOM_STATE = 42
+RANDOM_STATE = 39
 
 # Настройки pyDVL
 PYDVL_CONFIG = {
     'n_steps': 10,
     'rtol': 0.01,
-    'max_updates': 1000,  # Уменьшено для скорости (было 100)
+    'max_updates': 1000,
     'beta_shapley_params': {'alpha': 0.1, 'beta': 0.1},
-    # Настройки для новых valuation методов
+    # Настройки для новых методов
     'tmc_shapley_params': {'n_samples': 10},
     'knn_shapley_params': {'n_neighbors': 5},
     'banzhaf_params': {'n_samples': 10},
     'least_core_params': {'epsilon': 0.1, 'n_samples': 10},
-    # Настройки для новых influence методов
+    # Настройки для influence методов
     'influence_params': {
         'regularization': 1e-06,
         'batch_size': 16,  # Для DataLoader в influence методах
@@ -111,7 +111,7 @@ MODEL_CONFIGS = {
 
 # Настройки дистилляции
 DISTILLATION_CONFIG = {
-    'use_distillation': True,  # Включить дистилляцию для не-нейросетевых моделей
+    'use_distillation': True,
     'distillation_epochs': 200,  # Количество эпох для дистилляции
     'temperature': 2.0,  # Температура для дистилляции (пока не используется)
     'student_architecture': 'simple'  # Архитектура студенческой модели: 'simple' или 'improved'
@@ -120,10 +120,10 @@ DISTILLATION_CONFIG = {
 # Настройки экспериментов
 EXPERIMENT_CONFIG = {
     'test_size': 0.2,
-    'val_size': 0.2,
+    'val_size': 0.1,
     'n_epochs': 500,
     'sample_size_percentage': 100.0,
-    'n_remove_list': list(range(1, 100, 2)),  # 2%, 4%, ..., 100%
+    'n_remove_list': list(range(1, 100, 2)),
     'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']
 }
 
@@ -134,5 +134,5 @@ SYNTHETIC_DATA_CONFIG = {
     'n_epochs': 10,
     'hidden_size': 50,
     'n_estimators': 50,
-    'n_jobs': 1  # Для синтетических данных используем 1 для стабильности
+    'n_jobs': 1
 }
