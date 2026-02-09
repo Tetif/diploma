@@ -58,7 +58,7 @@ def check_gpu_availability():
         device_count = torch.cuda.device_count()
         device_name = torch.cuda.get_device_name(0)
         cuda_version = torch.version.cuda
-        print(f"✅ GPU available: {device_count} device(s)")
+        print(f"[OK] GPU available: {device_count} device(s)")
         print(f"   Device name: {device_name}")
         print(f"   CUDA version: {cuda_version}")
         

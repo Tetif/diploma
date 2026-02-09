@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from .base import BaseModel
-from config.settings import MODEL_CONFIGS, DEVICE
+from config.settings import get_model_config, CURRENT_DATASET, DEVICE
 from experiments.logger import debug_print
 
 class SimpleNN(nn.Module):
     def __init__(self, input_size, layers=None, dropout=0.2):
         super(SimpleNN, self).__init__()
         if layers is None:
-            layers = MODEL_CONFIGS['pytorch']['simple']['layers']
+            layers = get_model_config(CURRENT_DATASET, 'pytorch')['simple']['layers']
 
         modules = []
         prev_size = input_size
@@ -33,9 +33,9 @@ class ImprovedNN(nn.Module):
     def __init__(self, input_size, layers=None, dropout=None, batch_norm=True):
         super(ImprovedNN, self).__init__()
         if layers is None:
-            layers = MODEL_CONFIGS['pytorch']['improved']['layers']
+            layers = get_model_config(CURRENT_DATASET, 'pytorch')['improved']['layers']
         if dropout is None:
-            dropout = MODEL_CONFIGS['pytorch']['improved']['dropout']
+            dropout = get_model_config(CURRENT_DATASET, 'pytorch')['improved']['dropout']
 
         modules = []
         prev_size = input_size
@@ -64,7 +64,7 @@ class ImprovedNN(nn.Module):
 class SimpleFTTransformer(nn.Module):
     def __init__(self, input_size, **kwargs):
         super().__init__()
-        config = MODEL_CONFIGS['pytorch']['ft_transformer_simple'].copy()
+        config = get_model_config(CURRENT_DATASET, 'pytorch')['ft_transformer_simple'].copy()
         config.update(kwargs)
 
         self.d_model = config['d_model']
@@ -98,18 +98,37 @@ class PyTorchModelWrapper(BaseModel):
         self.device = device
         self.model_architecture = model_architecture
 
-        if model_architecture == 'improved':
-            self.model = ImprovedNN(input_size, **kwargs).to(device)
-        elif model_architecture == 'ft_transformer':
-            self.model = SimpleFTTransformer(input_size, **kwargs).to(device)
-        elif model_architecture == 'ft_transformer_simple':
-            self.model = SimpleFTTransformer(input_size, **kwargs).to(device)
-        else:
-            self.model = SimpleNN(input_size, **kwargs).to(device)
+        # Фильтруем параметры, чтобы передать только те, что нужны моделям
+        model_kwargs = {
+            'layers': kwargs.get('layers'),
+            'dropout': kwargs.get('dropout'),
+            'batch_norm': kwargs.get('batch_norm'),
+            'd_model': kwargs.get('d_model'),
+            'nhead': kwargs.get('nhead'),
+            'num_layers': kwargs.get('num_layers'),
+            'dim_feedforward': kwargs.get('dim_feedforward'),
+        }
+        # Удаляем None значения
+        model_kwargs = {k: v for k, v in model_kwargs.items() if v is not None}
 
-        self.optimizer = optim.Adam(self.model.parameters(),
-                                    lr=kwargs.get('learning_rate', 0.001))
+        if model_architecture == 'improved':
+            self.model = ImprovedNN(input_size, **model_kwargs).to(device)
+        elif model_architecture == 'ft_transformer':
+            self.model = SimpleFTTransformer(input_size, **model_kwargs).to(device)
+        elif model_architecture == 'ft_transformer_simple':
+            self.model = SimpleFTTransformer(input_size, **model_kwargs).to(device)
+        else:
+            self.model = SimpleNN(input_size, **model_kwargs).to(device)
+
+        self.optimizer = optim.AdamW(self.model.parameters(),
+                                     lr=kwargs.get('learning_rate', 0.001),
+                                     weight_decay=1e-4)  # L2 regularization
+        # Learning rate scheduler for adaptive learning rate reduction
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='min', factor=0.5, patience=10
+        )
         self.criterion = nn.MSELoss()
+        self.val_losses_for_scheduler = []  # Track losses for scheduler
 
     def fit(self, X, y, epochs=5, **kwargs):
         X_tensor = torch.FloatTensor(X).to(self.device)
@@ -172,7 +191,7 @@ class DistilledModelWrapper(BaseModel):
             self.student_model = SimpleNN(input_size, dropout=0.0).to(device)  # Отключаем dropout
 
         self.optimizer = optim.Adam(self.student_model.parameters(),
-                                    lr=MODEL_CONFIGS['pytorch']['simple']['learning_rate'])
+                                    lr=get_model_config(CURRENT_DATASET, 'pytorch')['simple']['learning_rate'])
         self.criterion = nn.MSELoss()
 
     def fit(self, X, y, epochs=None, X_val=None, y_val=None, **kwargs):
@@ -197,7 +216,6 @@ class DistilledModelWrapper(BaseModel):
         teacher_tensor = torch.FloatTensor(teacher_predictions).reshape(-1, 1).to(self.device)
 
         # Обучаем студенческую модель имитировать учителя
-        debug_print(f"Distilling knowledge for {self.distillation_epochs} epochs...")
         self.student_model.train()
 
         for epoch in range(self.distillation_epochs):
@@ -206,10 +224,6 @@ class DistilledModelWrapper(BaseModel):
             loss = self.criterion(student_output, teacher_tensor)
             loss.backward()
             self.optimizer.step()
-
-            if (epoch + 1) % 10 == 0:
-                debug_print(
-                    f"Distillation epoch {epoch + 1}/{self.distillation_epochs}, Loss: {loss.item():.4f}")
 
         self.is_distilled = True
         debug_print("Distillation completed successfully!")

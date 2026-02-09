@@ -26,12 +26,124 @@ from config.settings import PYDVL_CONFIG, N_JOBS, RANDOM_STATE
 from .scorers import ScorerFactory
 
 
+class SafeModelWrapper:
+    """
+    Wrapper around sklearn/LightGBM models to handle edge cases in valuation methods.
+    Specifically handles empty datasets and very small subsets that can cause crashes.
+    Must be compatible with sklearn's clone() for use with ModelUtility.
+    """
+    def __init__(self, model=None, **kwargs):
+        # Accept any kwargs for sklearn clone compatibility
+        # But only store the model, ignore other parameters
+        self.model = model
+        self._fitted = False
+        if model is not None:
+            self._is_regressor = hasattr(model, '_estimator_type') and model._estimator_type == 'regressor'
+        else:
+            self._is_regressor = True
+        
+    def fit(self, X, y=None, **kwargs):
+        # Handle empty or tiny datasets
+        if len(X) == 0 or (y is not None and len(y) == 0):
+            debug_print("SafeModelWrapper: Empty dataset, skipping fit")
+            return self
+        
+        if len(X) < 1:
+            debug_print(f"SafeModelWrapper: Dataset too small ({len(X)} samples), skipping fit")
+            return self
+        
+        # Fit the underlying model
+        if self.model is not None:
+            try:
+                self.model.fit(X, y, **kwargs)
+            except Exception as e:
+                debug_print(f"SafeModelWrapper.fit failed: {e}, but continuing anyway")
+        self._fitted = True
+        return self
+    
+    def predict(self, X):
+        if self.model is None or not self._fitted:
+            # Return dummy predictions if not fitted
+            if self._is_regressor:
+                return np.zeros(len(X)) if len(X) > 0 else np.array([])
+            else:
+                return np.zeros(len(X), dtype=int) if len(X) > 0 else np.array([], dtype=int)
+        
+        if len(X) == 0:
+            if self._is_regressor:
+                return np.array([])
+            else:
+                return np.array([], dtype=int)
+        
+        try:
+            return self.model.predict(X)
+        except Exception as e:
+            debug_print(f"SafeModelWrapper.predict failed: {e}")
+            if self._is_regressor:
+                return np.zeros(len(X))
+            else:
+                return np.zeros(len(X), dtype=int)
+    
+    def get_params(self, deep=True):
+        # Required for sklearn compatibility - return only model, not other kwargs
+        # This ensures clone() only passes 'model' parameter
+        return {'model': self.model}
+    
+    def set_params(self, **params):
+        # Required for sklearn compatibility
+        if 'model' in params:
+            self.model = params['model']
+        return self
+    
+    def __getattr__(self, name):
+        # Delegate all other attributes to the underlying model
+        if name.startswith('_'):
+            # Don't delegate private attributes
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        if self.model is not None:
+            try:
+                return getattr(self.model, name)
+            except AttributeError:
+                raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}' (model is None)")
+
+
 class InfluenceMethods:
     """Класс для работы с методами оценки влияния"""
 
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, dataset_config=None):
         self.logger = logger
+        self.dataset_config = dataset_config
         self.methods = {}
+
+    @staticmethod
+    def _extract_torch_model(model_wrapper):
+        """
+        Extracts the actual torch.nn.Module from potentially wrapped model.
+        Handles: SafeModelWrapper -> PyTorchModelWrapper -> nn.Module
+        """
+        # Try student_model first (for distilled models)
+        influence_model = getattr(model_wrapper, "student_model", None)
+        if influence_model is not None and isinstance(influence_model, torch.nn.Module):
+            return influence_model
+        
+        # Try direct model attribute
+        influence_model = getattr(model_wrapper, "model", None)
+        if influence_model is not None:
+            # If it's already nn.Module, use it
+            if isinstance(influence_model, torch.nn.Module):
+                return influence_model
+            # If it's PyTorchModelWrapper or similar, try to get nested model
+            nested_model = getattr(influence_model, "model", None)
+            if nested_model is not None and isinstance(nested_model, torch.nn.Module):
+                return nested_model
+        
+        # Fallback: return model_wrapper itself if it's nn.Module
+        if isinstance(model_wrapper, torch.nn.Module):
+            return model_wrapper
+        
+        # Last resort: return None to signal failure
+        return None
 
     def setup_methods(self, pipeline, X_train, y_train, X_val, y_val,
                       preprocessor, methods_to_use=None):
@@ -74,12 +186,32 @@ class InfluenceMethods:
             val_dataset = Dataset(X_train_t, y_train_1d.reshape(-1, 1), X_val_t, y_val_1d.reshape(-1, 1))
 
         # Создание скорера
-        scorer_callable = ScorerFactory.create_scorer('neg_mae')
+        # Выбираем scorer в зависимости от типа задачи
+        if self.dataset_config and hasattr(self.dataset_config, 'task_type'):
+            if self.dataset_config.task_type == 'regression':
+                scorer_name = 'neg_mae'  # или другой регрессионный метрик
+            elif self.dataset_config.task_type == 'binary_classification':
+                scorer_name = 'f1'  # или другой метрик классификации
+            elif self.dataset_config.task_type == 'multiclass_classification':
+                scorer_name = 'f1_weighted'
+            else:
+                scorer_name = 'neg_mae'  # default
+        else:
+            # Default для обратной совместимости
+            scorer_name = 'neg_mae'
+            
+        if self.logger:
+            self.logger.log_message(f"Using scorer: {scorer_name}")
+            
+        scorer_callable = ScorerFactory.create_scorer(scorer_name)
         model_wrapper = pipeline.named_steps['model']
+        
+        # CRITICAL: Wrap model in SafeModelWrapper to handle empty datasets during valuation
+        model_wrapper = SafeModelWrapper(model_wrapper)
 
         # Проверяем, что модель обучена перед созданием scorer
-        if hasattr(model_wrapper, 'estimators_'):
-            if model_wrapper.estimators_ is None or len(model_wrapper.estimators_) == 0:
+        if hasattr(model_wrapper.model, 'estimators_'):
+            if model_wrapper.model.estimators_ is None or len(model_wrapper.model.estimators_) == 0:
                 self.logger.log_message("WARNING: RandomForest model not properly fitted before creating scorer!")
                 # Попытка переобучить модель на тренировочных данных
                 if self.logger:
@@ -98,6 +230,10 @@ class InfluenceMethods:
             default=float(-1e6),
             range=None
         )
+        
+        if self.logger:
+            self.logger.log_message(f"[DEBUG] SupervisedScorer created with default={-1e6}")
+            self.logger.log_message(f"[DEBUG] Scorer callable: {scorer_callable}")
 
         utility = ModelUtility(
             model=model_wrapper,
@@ -105,6 +241,11 @@ class InfluenceMethods:
             show_warnings=True,
             clone_before_fit=True  # Изменено на True для клонирования модели перед каждым fit
         )
+        
+        if self.logger:
+            self.logger.log_message(f"[DEBUG] ModelUtility created")
+            self.logger.log_message(f"[DEBUG] Model type in utility: {type(model_wrapper)}")
+            self.logger.log_message(f"[DEBUG] Scorer in utility: {type(supervised_scorer)}")
 
         # Определение методов для использования
         if methods_to_use is None:
@@ -120,8 +261,23 @@ class InfluenceMethods:
                               ]  # Добавлены новые методы для тестирования
 
             # Проверяем, является ли модель PyTorch моделью или дистиллированной
-            is_pytorch = (hasattr(model_wrapper, 'model') and isinstance(getattr(model_wrapper, 'model', None), torch.nn.Module)) or \
-                         (hasattr(model_wrapper, 'student_model') and isinstance(getattr(model_wrapper, 'student_model', None), torch.nn.Module))
+            # Check for PyTorch models:
+            # 1. Direct nn.Module: wrapped.model is nn.Module
+            # 2. PyTorchModelWrapper: wrapped.model is PyTorchModelWrapper with .model as nn.Module
+            # 3. Student model for distillation: wrapped.student_model is nn.Module
+            is_pytorch = False
+            
+            if hasattr(model_wrapper, 'model'):
+                inner_model = getattr(model_wrapper, 'model', None)
+                if isinstance(inner_model, torch.nn.Module):
+                    is_pytorch = True
+                elif hasattr(inner_model, 'model') and isinstance(getattr(inner_model, 'model', None), torch.nn.Module):
+                    # PyTorchModelWrapper case
+                    is_pytorch = True
+            
+            if hasattr(model_wrapper, 'student_model') and isinstance(getattr(model_wrapper, 'student_model', None), torch.nn.Module):
+                is_pytorch = True
+            
             if is_pytorch:
                 methods_to_use.extend([
                     'Influence',
@@ -143,11 +299,13 @@ class InfluenceMethods:
                     if method_name == 'LOO':
                         if self.logger:
                             self.logger.start_timing("LOO_setup")
+                            self.logger.log_message("[DEBUG] Creating LOOValuation...")
                         self.methods['LOO'] = LOOValuation(
                             utility=utility,
                             progress=True
                         )
                         if self.logger:
+                            self.logger.log_message("[DEBUG] LOOValuation created successfully")
                             self.logger.end_timing("LOO_setup")
 
                     elif method_name == 'DataShapley':
@@ -195,12 +353,16 @@ class InfluenceMethods:
                     elif method_name == 'TMCShapley':
                         if self.logger:
                             self.logger.start_timing("TMCShapley_setup")
+                            self.logger.log_message("[DEBUG] Creating TMCShapleyValuation...")
+                            self.logger.log_message(f"[DEBUG] Utility type: {type(utility)}")
+                            self.logger.log_message(f"[DEBUG] Config: n_samples={PYDVL_CONFIG['tmc_shapley_params']['n_samples']}")
                         self.methods['TMCShapley'] = TMCShapleyValuation(
                             utility=utility,
                             is_done=MaxUpdates(PYDVL_CONFIG['tmc_shapley_params']['n_samples']),
                             progress=True
                         )
                         if self.logger:
+                            self.logger.log_message("[DEBUG] TMCShapleyValuation created successfully")
                             self.logger.end_timing("TMCShapley_setup")
 
                     elif method_name == 'KNNShapley':
@@ -231,11 +393,12 @@ class InfluenceMethods:
                         if self.logger:
                             self.logger.start_timing("Influence_setup")
 
-                        # Для дистиллированных моделей используем student_model
-                        influence_model = getattr(model_wrapper, "student_model", None)
+                        # Extract the actual torch.nn.Module from wrapped model
+                        influence_model = self._extract_torch_model(model_wrapper)
                         if influence_model is None:
-                            # Для обычных PyTorch моделей используем model
-                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+                            if self.logger:
+                                self.logger.log_message(f"ERROR: Could not extract nn.Module for {method_name}")
+                            continue
 
                         # Переключаем модель в eval режим для избежания случайных операций
                         if hasattr(influence_model, 'eval'):
@@ -253,9 +416,11 @@ class InfluenceMethods:
                         if self.logger:
                             self.logger.start_timing("ArnoldiInfluence_setup")
 
-                        influence_model = getattr(model_wrapper, "student_model", None)
+                        influence_model = self._extract_torch_model(model_wrapper)
                         if influence_model is None:
-                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+                            if self.logger:
+                                self.logger.log_message(f"ERROR: Could not extract nn.Module for {method_name}")
+                            continue
 
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
@@ -265,7 +430,7 @@ class InfluenceMethods:
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
                             rank=PYDVL_CONFIG['influence_params']['arnoldi_params']['rank'],
                             regularization=PYDVL_CONFIG['influence_params']['regularization'],
-                            eigen_computation_on_gpu = True
+                            eigen_computation_on_gpu=False  # Disable GPU eigen to avoid cupy requirement
                         )
                         if self.logger:
                             self.logger.end_timing("ArnoldiInfluence_setup")
@@ -274,9 +439,11 @@ class InfluenceMethods:
                         if self.logger:
                             self.logger.start_timing("CgInfluence_setup")
 
-                        influence_model = getattr(model_wrapper, "student_model", None)
+                        influence_model = self._extract_torch_model(model_wrapper)
                         if influence_model is None:
-                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+                            if self.logger:
+                                self.logger.log_message(f"ERROR: Could not extract nn.Module for {method_name}")
+                            continue
 
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
@@ -295,9 +462,11 @@ class InfluenceMethods:
                         if self.logger:
                             self.logger.start_timing("LissaInfluence_setup")
 
-                        influence_model = getattr(model_wrapper, "student_model", None)
+                        influence_model = self._extract_torch_model(model_wrapper)
                         if influence_model is None:
-                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+                            if self.logger:
+                                self.logger.log_message(f"ERROR: Could not extract nn.Module for {method_name}")
+                            continue
 
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
@@ -319,9 +488,11 @@ class InfluenceMethods:
                         if self.logger:
                             self.logger.start_timing("NystroemSketchInfluence_setup")
 
-                        influence_model = getattr(model_wrapper, "student_model", None)
+                        influence_model = self._extract_torch_model(model_wrapper)
                         if influence_model is None:
-                            influence_model = getattr(model_wrapper, "model", model_wrapper)
+                            if self.logger:
+                                self.logger.log_message(f"ERROR: Could not extract nn.Module for {method_name}")
+                            continue
 
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
@@ -497,12 +668,26 @@ class InfluenceMethods:
 
                 else:
                     # Вычисление для valuation методов
+                    if self.logger:
+                        self.logger.log_message(f"[DEBUG] {name}: Starting fit process...")
+                        self.logger.log_message(f"[DEBUG] {name}: train_dataset type = {type(train_dataset)}")
+                        self.logger.log_message(f"[DEBUG] {name}: method type = {type(method)}")
+                    
                     with parallel_config(backend="threading", n_jobs=N_JOBS):
                         try:
+                            if self.logger:
+                                self.logger.log_message(f"[DEBUG] {name}: Calling method.fit()...")
                             result = method.fit(train_dataset)
+                            
+                            if self.logger:
+                                self.logger.log_message(f"[DEBUG] {name}: fit() returned, result type = {type(result)}")
+                                self.logger.log_message(f"[DEBUG] {name}: result is None? {result is None}")
+                                if result is not None:
+                                    self.logger.log_message(f"[DEBUG] {name}: result value (first 100 chars) = {repr(result)[:100]}")
+                            
                             if result is None:
                                 if self.logger:
-                                    self.logger.log_message(f"WARNING: {name} method returned None result")
+                                    self.logger.log_message(f"[DEBUG] WARNING: {name} method returned None result")
                                 scores[name] = np.zeros(len(X_train_t))
                                 scores_raw[name] = np.zeros(len(X_train_t))
                                 continue
@@ -518,7 +703,16 @@ class InfluenceMethods:
                     # Проверяем, что получили правильное количество значений
                     if len(values_arr) == 0:
                         if self.logger:
-                            self.logger.log_message(f"WARNING: {name} method returned no values")
+                            self.logger.log_message(f"[DEBUG] WARNING: {name} method returned no/empty values array")
+                            self.logger.log_message(f"[DEBUG] {name}: result.values() = {getattr(result, 'values', 'N/A')}")
+                            try:
+                                if hasattr(result, 'values'):
+                                    vals_direct = list(result.values())
+                                    self.logger.log_message(f"[DEBUG] {name}: Direct values() call returned {len(vals_direct)} items")
+                                    if vals_direct:
+                                        self.logger.log_message(f"[DEBUG] {name}: First value: {vals_direct[0]}")
+                            except Exception as e:
+                                self.logger.log_message(f"[DEBUG] {name}: Direct values() failed: {e}")
                         scores[name] = np.zeros(len(X_train_t))
                         scores_raw[name] = np.zeros(len(X_train_t))
                         continue
@@ -526,13 +720,15 @@ class InfluenceMethods:
                     expected_len = len(X_train_t)
                     if len(values_arr) != expected_len:
                         if self.logger:
-                            self.logger.log_message(f"WARNING: {name} returned {len(values_arr)} values, expected {expected_len}")
+                            self.logger.log_message(f"[DEBUG] WARNING: {name} returned {len(values_arr)} values, expected {expected_len}")
                             if len(values_arr) < expected_len:
                                 # Дополняем нулями
                                 padding = np.zeros(expected_len - len(values_arr))
+                                self.logger.log_message(f"[DEBUG] {name}: Padding with {len(padding)} zeros")
                                 values_arr = np.concatenate([values_arr, padding])
                             else:
                                 # Обрезаем до нужной длины
+                                self.logger.log_message(f"[DEBUG] {name}: Truncating to {expected_len}")
                                 values_arr = values_arr[:expected_len]
 
                     # Diagnostic logging about extracted values

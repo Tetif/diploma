@@ -7,7 +7,13 @@ def _extract_numeric_values_from_result(result):
     Расширенная диагностика извлечения значений из результатов pyDVL
     с улучшенной обработкой разных масштабов значений
     """
-    debug_print(f"Extracting values from result type: {type(result)}")
+    debug_print(f"[DEBUG] Extracting values from result type: {type(result)}")
+    debug_print(f"[DEBUG] Result class: {result.__class__.__name__}")
+    debug_print(f"[DEBUG] Has .values(): {hasattr(result, 'values')}")
+    debug_print(f"[DEBUG] Is iterable: {hasattr(result, '__iter__')}")
+    # Show attributes
+    attrs = [a for a in dir(result) if not a.startswith('_')]
+    debug_print(f"[DEBUG] Public attributes: {attrs[:15]}")
 
     extraction_methods = [
         ('values()', lambda: result.values()),
@@ -20,25 +26,44 @@ def _extract_numeric_values_from_result(result):
         try:
             items = method()
             if items is not None:
-                print(
-                    f"Success with {method_name}, got {len(list(items)) if hasattr(items, '__len__') else 'unknown'} items")
-                items_list = list(items) if hasattr(items, '__iter__') and not isinstance(items, (int, float)) else [
-                    items]
+                items_count = len(list(items)) if hasattr(items, '__len__') else 'unknown'
+                debug_print(f"[DEBUG] Success with {method_name}, got {items_count} items")
+                print(f"Success with {method_name}, got {items_count} items")
+                items_list = list(items) if hasattr(items, '__iter__') and not isinstance(items, (int, float)) else [items]
+                if items_list:
+                    debug_print(f"[DEBUG] First item type: {type(items_list[0])}, repr: {repr(items_list[0])[:150]}")
                 break
         except Exception as e:
+            debug_print(f"[DEBUG] Failed {method_name}: {e}")
             print(f"Failed {method_name}: {e}")
             continue
     else:
+        debug_print("[DEBUG] All extraction methods failed, returning zeros")
         print("All extraction methods failed, returning zeros")
         return np.array([])
 
     numeric = []
-    debug_print(f"Processing {len(items_list)} items...")
+    debug_print(f"[DEBUG] Processing {len(items_list)} items...")
 
     for i, v in enumerate(items_list):
         if v is None:
+            if i < 5:
+                debug_print(f"[DEBUG] Item {i}: value is None, appending 0.0")
             numeric.append(0.0)
             continue
+
+        if i < 15:  # Debug first 15 items for LOO/TMCShapley
+            debug_print(f"[DEBUG] Item {i}: type={type(v).__name__}, repr={repr(v)[:200]}")
+            if hasattr(v, '__dict__'):
+                dict_keys = list(v.__dict__.keys())[:10]
+                debug_print(f"[DEBUG]   __dict__ keys: {dict_keys}")
+                # Try to show values
+                for key in dict_keys[:3]:
+                    try:
+                        val = getattr(v, key)
+                        debug_print(f"[DEBUG]   .{key} = {val}")
+                    except:
+                        pass
 
         value_extractors = [
             ('direct', lambda x: float(x)),
@@ -52,15 +77,17 @@ def _extract_numeric_values_from_result(result):
         for extractor_name, extractor in value_extractors:
             try:
                 extracted = extractor(v)
-                if i < 5:
-                    debug_print(f"Item {i}: successfully extracted value {extracted} using {extractor_name}")
+                if i < 15:
+                    debug_print(f"[DEBUG] Item {i}: extracted {extracted} via {extractor_name}")
                 break
-            except (AttributeError, TypeError, ValueError, KeyError):
+            except (AttributeError, TypeError, ValueError, KeyError) as e:
+                if i < 5:
+                    debug_print(f"[DEBUG] Item {i}: {extractor_name} failed ({type(e).__name__})")
                 continue
 
         if extracted is None:
-            if i < 5:
-                debug_print(f"Item {i}: failed to extract value from {type(v)}: {v}")
+            if i < 15:
+                debug_print(f"[DEBUG] Item {i}: ALL EXTRACTORS FAILED, using 0.0")
             numeric.append(0.0)
         else:
             numeric.append(extracted)
@@ -69,9 +96,16 @@ def _extract_numeric_values_from_result(result):
 
     # Detect sentinel fail_score values (e.g., +/-1e6 used by scorers) and neutralize them
     try:
+        debug_print(f"[DEBUG] Numeric array shape: {result_array.shape}, dtype: {result_array.dtype}")
+        debug_print(f"[DEBUG] Unique values (up to 20): {np.unique(result_array)[:20]}")
+        unique_count = len(np.unique(result_array))
+        debug_print(f"[DEBUG] Total unique values: {unique_count}")
+        if result_array.size > 0:
+            debug_print(f"[DEBUG] Min: {np.min(result_array):.10g}, Max: {np.max(result_array):.10g}, Mean: {np.mean(result_array):.10g}")
+        
         sentinel_mask = np.abs(result_array) > 9e5
         if np.any(sentinel_mask):
-            debug_print(f"Detected sentinel fail_score values for {int(np.sum(sentinel_mask))} items, replacing with NaN for robust stats")
+            debug_print(f"[DEBUG] Detected {int(np.sum(sentinel_mask))} sentinel fail_score values, replacing with NaN")
             # Log sample of original items that produced extreme values
             try:
                 large_idx = np.where(sentinel_mask)[0][:10]

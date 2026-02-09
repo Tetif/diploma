@@ -1,10 +1,53 @@
 import pandas as pd
+from typing import Tuple
 from experiments.logger import debug_print
+from config.datasets.base import BaseDatasetConfig
 import time
 
 
+class DataLoaderFactory:
+    """Фабрика для загрузки данных из различных датасетов"""
+
+    @staticmethod
+    def load_dataset(dataset_config: BaseDatasetConfig, logger=None) -> Tuple[pd.DataFrame, pd.Series, BaseDatasetConfig]:
+        """
+        Загрузить датасет используя его конфигурацию
+        
+        Args:
+            dataset_config: Конфигурация датасета
+            logger: Логгер для вывода информации
+            
+        Returns:
+            Tuple[pd.DataFrame, pd.Series, BaseDatasetConfig]: (признаки, целевая переменная, конфиг)
+        """
+        if logger:
+            logger.start_timing("data_loading")
+            logger.log_message(f"Loading dataset: {dataset_config.name}")
+
+        try:
+            # Загружаем данные используя конфиг
+            X, y = dataset_config.load_data()
+
+            # Валидируем данные
+            is_valid = dataset_config.validate_data(X)
+            if not is_valid:
+                if logger:
+                    logger.log_message("Warning: Dataset validation failed")
+
+            if logger:
+                logger.log_message(f"Loaded {len(X)} rows, {len(X.columns)} columns")
+                logger.end_timing("data_loading")
+
+            return X, y, dataset_config
+
+        except Exception as e:
+            if logger:
+                logger.log_message(f"Error loading dataset: {str(e)}")
+            raise
+
+
 class DataLoader:
-    """Класс для загрузки и объединения данных"""
+    """Класс для загрузки и объединения данных (для обратной совместимости)"""
 
     def __init__(self, logger=None):
         self.logger = logger

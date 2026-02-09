@@ -67,9 +67,3 @@ class ModelFactory:
     def get_available_models():
         """Возвращает список доступных моделей"""
         return ['lightgbm', 'xgboost', 'random_forest', 'catboost', 'pytorch']
-
-    @staticmethod
-    def get_model_config(model_type):
-        """Возвращает конфигурацию для модели"""
-        from config.settings import MODEL_CONFIGS
-        return MODEL_CONFIGS.get(model_type, {})

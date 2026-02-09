@@ -1,4 +1,12 @@
 import torch
+from config.datasets.adult_config import ADULT_CONFIG
+from config.datasets.housing_config import HOUSING_CONFIG
+from config.datasets.wine_config import WINE_CONFIG
+from config.datasets.zillow_config import ZILLOW_CONFIG
+
+# ===== ВЫБОР ДАТАСЕТА =====
+# Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine'
+CURRENT_DATASET = 'wine'  # Можно менять для работы с разными датасетами
 
 # Глобальные флаги для отладки
 DEBUG_MODE = False
@@ -9,7 +17,7 @@ USE_CACHE = True  # Использовать ли кэш предобработ�
 # Настройки вычислений
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 N_JOBS = 8
-RANDOM_STATE = 39
+RANDOM_STATE = 42
 
 # Настройки pyDVL
 PYDVL_CONFIG = {
@@ -33,81 +41,34 @@ PYDVL_CONFIG = {
     }
 }
 
-# Настройки моделей
-MODEL_CONFIGS = {
-    'lightgbm': {
-        'objective': 'regression',
-        'metric': 'mae',
-        'num_leaves': 31,
-        'learning_rate': 0.05,
-        'feature_fraction': 0.9,
-        'bagging_fraction': 0.8,
-        'bagging_freq': 5,
-        'verbose': -1,
-        'n_jobs': -1,
-        'random_state': RANDOM_STATE
-    },
-    'xgboost': {
-        'objective': 'reg:squarederror',
-        'eval_metric': 'mae',
-        'max_depth': 6,
-        'learning_rate': 0.05,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'random_state': RANDOM_STATE,
-        'n_jobs': -1
-    },
-    'catboost': {
-        'iterations': 100,
-        'learning_rate': 0.05,
-        'depth': 10,
-        'loss_function': 'MAE',
-        'verbose': False,
-        'random_state': RANDOM_STATE,
-        'thread_count': -1
-    },
-    'random_forest': {
-        'n_estimators': 100,
-        'max_depth': 10,
-        'random_state': RANDOM_STATE,
-        'n_jobs': -1
-    },
-    'pytorch': {
-        'simple': {
-            'layers': [16, 8, 4],
-            'dropout': 0.2,
-            'learning_rate': 0.001
-        },
-    # 'pytorch': {
-    #     'simple': {
-    #         'layers': [128, 64, 32],
-    #         'dropout': 0.2,
-    #         'learning_rate': 0.001
-    #     },
-        'improved': {
-            'layers': [32, 16, 8, 4],
-            'batch_norm': True,
-            'dropout': [0.3, 0.3, 0.2],
-            'learning_rate': 0.001
-        },
-        'ft_transformer': {
-            'd_model': 64,
-            'nhead': 8,
-            'num_layers': 3,
-            'dim_feedforward': 256,
-            'dropout': 0.1,
-            'learning_rate': 0.001
-        },
-        'ft_transformer_simple': {
-            'd_model': 16,
-            'nhead': 4,
-            'num_layers': 1,
-            'dim_feedforward': 64,
-            'dropout': 0.1,
-            'learning_rate': 0.001
-        }
-    }
+# Оптимальные параметры для каждого датасета и модели
+# Собраны из отдельных конфиг файлов в папке config/datasets/
+DATASET_MODEL_CONFIGS = {
+    'adult': ADULT_CONFIG,
+    'housing': HOUSING_CONFIG,
+    'wine': WINE_CONFIG,
+    'zillow': ZILLOW_CONFIG
 }
+
+# Функция для получения конфигов модели для конкретного датасета
+def get_model_config(dataset_name, model_type):
+    """
+    Получить конфигурацию модели для конкретного датасета.
+    
+    Args:
+        dataset_name (str): Имя датасета ('adult', 'housing', 'wine', 'zillow')
+        model_type (str): Тип модели ('lightgbm', 'xgboost', 'catboost', 'random_forest', 'pytorch')
+    
+    Returns:
+        dict: Конфигурация модели для данного датасета
+    """
+    if dataset_name not in DATASET_MODEL_CONFIGS:
+        raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(DATASET_MODEL_CONFIGS.keys())}")
+    
+    if model_type not in DATASET_MODEL_CONFIGS[dataset_name]:
+        raise ValueError(f"Unknown model type: {model_type}. Available: {list(DATASET_MODEL_CONFIGS[dataset_name].keys())}")
+    
+    return DATASET_MODEL_CONFIGS[dataset_name][model_type].copy()
 
 # Настройки дистилляции
 DISTILLATION_CONFIG = {
@@ -121,8 +82,9 @@ DISTILLATION_CONFIG = {
 EXPERIMENT_CONFIG = {
     'test_size': 0.2,
     'val_size': 0.1,
-    'n_epochs': 500,
-    'sample_size_percentage': 100.0,
+    'n_epochs': 2,
+    'sample_size_percentage': 100,
+    'cv_folds': 2,
     'n_remove_list': list(range(1, 100, 2)),
     'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']
 }
@@ -136,3 +98,6 @@ SYNTHETIC_DATA_CONFIG = {
     'n_estimators': 50,
     'n_jobs': 1
 }
+
+# Экспортируем CURRENT_DATASET для удобства
+__all__ = ['CURRENT_DATASET']
