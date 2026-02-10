@@ -50,7 +50,15 @@ def plot_influence_distribution(scores, plot_name_suffix="", logger=None):
 
 
 def plot_results_enhanced(results, n_remove_list, logger=None, random_run_results=None):
-    """Улучшенная визуализация результатов экспериментов с доверительными интервалами для random метода"""
+    """Улучшенная визуализация результатов экспериментов
+    
+    Args:
+        results: Основные результаты экспериментов
+        n_remove_list: Список процентов удаляемых образцов
+        logger: Логгер для вывода информации
+        random_run_results: Результаты от нескольких случайных запусков для отображения вариативности
+                           Должен быть список результатов от разных запусков с аналогичной структурой
+    """
     if logger:
         logger.log_message("Creating enhanced visualization...")
     else:
@@ -121,6 +129,10 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
         debug_print(f"Detected methods for plotting: {methods}")
 
     for method in methods:
+        # Пропускаем random если выводятся несколько запусков random
+        if method == 'random' and random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
+            continue
+            
         mae_values = []
 
         if 'orig' in results:
@@ -143,6 +155,10 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
                          markersize=4, label=f'{method} (raw)')
 
     for method in methods:
+        # Пропускаем random если выводятся несколько запусков random
+        if method == 'random' and random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
+            continue
+            
         mae_values = []
 
         if 'orig' in results:
@@ -157,10 +173,6 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
 
         clean_mae = [val for val in mae_values if not np.isnan(val)]
         clean_indices = [i for i, val in enumerate(mae_values) if not np.isnan(val)]
-
-        # Пропускаем trend линию для random метода (у него свои confidence intervals)
-        if method == 'random':
-            continue
 
         if len(clean_mae) > 1:
             window_size = min(3, len(clean_mae))
@@ -177,58 +189,58 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
                      color=trend_colors.get(method, '#999999'), alpha=0.9, linewidth=3,
                      label=f'{method} (trend)')
 
+    # Добавляем результаты от нескольких случайных запусков
+    if random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
+        if logger:
+            logger.log_message(f"Plotting uncertainty bounds from random runs...")
+        else:
+            debug_print(f"Plotting uncertainty bounds from random runs...")
+        
+        # random_run_results это словарь {pct: [mae_values]}
+        x_random = [0] + n_remove_list
+        worst_values = []
+        best_values = []
+        mean_values = []
+        
+        # Для каждой точки (0%, 10%, 20% и т.д.)
+        for pct_value in x_random:
+            if pct_value == 0:
+                # Для базовой точки (0%) нет данных в random_run_results
+                worst_values.append(np.nan)
+                best_values.append(np.nan)
+                mean_values.append(np.nan)
+            else:
+                # Для других процентов берем данные из словаря
+                if pct_value in random_run_results and len(random_run_results[pct_value]) > 0:
+                    mae_at_point = random_run_results[pct_value]
+                    worst_values.append(max(mae_at_point))
+                    best_values.append(min(mae_at_point))
+                    mean_values.append(np.mean(mae_at_point))
+                else:
+                    worst_values.append(np.nan)
+                    best_values.append(np.nan)
+                    mean_values.append(np.nan)
+        
+        # Используем индексы с валидными данными
+        valid_indices = [i for i in range(len(mean_values)) if not np.isnan(mean_values[i])]
+        if len(valid_indices) > 0:
+            x_valid = [x_random[i] for i in valid_indices]
+            worst_valid = [worst_values[i] for i in valid_indices]
+            best_valid = [best_values[i] for i in valid_indices]
+            mean_valid = [mean_values[i] for i in valid_indices]
+            
+            # Показываем доверительный интервал (худший-лучший диапазон) - полупрозрачная полоса
+            plt.fill_between(x_valid, best_valid, worst_valid, 
+                            color='#f39c12', alpha=0.15, label='Random Runs Range')
+            
+            # Линия среднего значения - яркая (без маркеров)
+            plt.plot(x_valid, mean_valid, '-', color='#f39c12', alpha=0.9,
+                    linewidth=2.5, label='Random Mean')
+
     if 'orig' in results:
         baseline_mae = results['orig']['final_mae']
         plt.axhline(y=baseline_mae, color=trend_colors['Baseline'],
                     linestyle='--', alpha=0.7, linewidth=2, label='Baseline')
-
-    # Отображаем доверительные интервалы для random метода если доступны
-    if random_run_results is not None and 'random' in methods:
-        # Подготавливаем данные для заливки доверительного интервала
-        percentages = [0] + n_remove_list
-        lower_bounds = []
-        upper_bounds = []
-        medians = []
-        
-        # Для 0% (baseline)
-        if 'orig' in results:
-            baseline = results['orig']['final_mae']
-            lower_bounds.append(baseline)
-            upper_bounds.append(baseline)
-            medians.append(baseline)
-        
-        # Для остальных процентов
-        for pct in n_remove_list:
-            if pct in random_run_results and len(random_run_results[pct]) > 0:
-                mae_values = random_run_results[pct]
-                lower = np.min(mae_values)  # Наихудший результат
-                upper = np.max(mae_values)  # Наилучший результат
-                median = np.median(mae_values)
-                
-                lower_bounds.append(lower)
-                upper_bounds.append(upper)
-                medians.append(median)
-            else:
-                lower_bounds.append(np.nan)
-                upper_bounds.append(np.nan)
-                medians.append(np.nan)
-        
-        # Заливка между наилучшим и наихудшим результатами (полупрозрачная)
-        valid_indices = [i for i, val in enumerate(medians) if not np.isnan(val)]
-        if len(valid_indices) > 0:
-            x_valid = [percentages[i] for i in valid_indices]
-            y_lower = [lower_bounds[i] for i in valid_indices]
-            y_upper = [upper_bounds[i] for i in valid_indices]
-            
-            plt.fill_between(x_valid, y_lower, y_upper, 
-                           color=trend_colors.get('random', '#f39c12'), 
-                           alpha=0.15, label='Random (min-max range)')
-            
-            # Медианная линия (основная линия)
-            y_median = [medians[i] for i in valid_indices]
-            plt.plot(x_valid, y_median, '-',
-                    color=trend_colors.get('random', '#f39c12'), 
-                    alpha=0.9, linewidth=3, label='Random (median)', zorder=5)
 
     plt.xlabel('Percentage of Samples Removed')
     plt.ylabel('Validation MAE')
@@ -328,18 +340,23 @@ def plot_combined_comparison(results, n_remove_list, logger=None):
         plt.plot(x_points, test_mae_values, 's--', color=color, alpha=0.5,
                  linewidth=1.5, markersize=4, label=f'{method} (Test)')
 
-    # Добавляем случайное удаление (только holdout)
+    # Добавляем случайное удаление
     if 'random_10pct' in results:
         final_random = [results['orig']['final_mae']]
+        test_random = [results['orig']['best_val_mae']]
         for pct in n_remove_list:
             key = f'random_{pct}pct'
             if key in results:
                 final_random.append(results[key]['final_mae'])
+                test_random.append(results[key]['best_val_mae'])
             else:
                 final_random.append(np.nan)
+                test_random.append(np.nan)
 
         plt.plot(x_points, final_random, 'o-', color='gray', alpha=0.7,
                  linewidth=2, markersize=6, label='Random (Holdout)')
+        plt.plot(x_points, test_random, 's--', color='gray', alpha=0.5,
+                 linewidth=1.5, markersize=4, label='Random (Test)')
 
     plt.xlabel('Percentage of Samples Removed')
     plt.ylabel('MAE')

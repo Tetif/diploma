@@ -1,14 +1,12 @@
 import copy
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-import sys
 from sklearn.model_selection import train_test_split, KFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_absolute_error
 
 from experiments.logger import debug_print
-from config.settings import EXPERIMENT_CONFIG, RANDOM_STATE, DEBUG_MODE
+from config.settings import EXPERIMENT_CONFIG, RANDOM_STATE
 from models.factory import ModelFactory
 from influence.methods import InfluenceMethods
 
@@ -40,7 +38,8 @@ class ExperimentRunner:
         cv_folds = int(model_params.get('cv_folds', 1)) if model_params.get('cv_folds', None) is not None else 1
         cv_results = None
         if cv_folds and cv_folds > 1:
-            debug_print(f"Running {cv_folds}-fold cross-validation for model evaluation...")
+            if self.logger:
+                self.logger.log_message(f"Running {cv_folds}-fold cross-validation for model evaluation...")
 
             # Выбираем стратегию разделения: Stratified для классификации
             use_stratified = model_params.get('task_type', '').lower() in ['binary_classification', 'multiclass_classification']
@@ -65,12 +64,8 @@ class ExperimentRunner:
                     X_tr_t = X_tr_t.toarray()
                     X_val_t = X_val_t.toarray()
 
-                # Создаем модель для фолда. Важно передать корректный input_size после предобработки фолда
-                fold_input_size = X_tr_t.shape[1] if hasattr(X_tr_t, 'shape') else None
-                fold_model_params = model_params.copy()
-                if fold_input_size is not None:
-                    fold_model_params['input_size'] = fold_input_size
-                model_fold = ModelFactory.create_model(**fold_model_params)
+                # Создаем модель для фолда
+                model_fold = ModelFactory.create_model(**model_params)
 
                 # Обучаем модель (не используем X_test здесь, только фолд)
                 if model_params.get('model_type') == 'pytorch':
@@ -87,10 +82,12 @@ class ExperimentRunner:
 
                 val_mae = mean_absolute_error(y_val_fold, y_pred)
                 val_scores.append(val_mae)
-                debug_print(f"  Fold {fold_idx}/{cv_folds} - Val MAE: {val_mae:.4f}")
+                if self.logger:
+                    self.logger.log_message(f"  Fold {fold_idx}/{cv_folds} - Val MAE: {val_mae:.4f}")
 
             cv_results = {'mean_val_mae': float(np.mean(val_scores)), 'std_val_mae': float(np.std(val_scores)), 'folds': val_scores}
-            debug_print(f"CV results - Mean MAE: {cv_results['mean_val_mae']:.4f}, Std: {cv_results['std_val_mae']:.4f}")
+            if self.logger:
+                self.logger.log_message(f"CV results - Mean MAE: {cv_results['mean_val_mae']:.4f}, Std: {cv_results['std_val_mae']:.4f}")
 
         # Создание модели (финальная подгонка на всем X_train)
         model = ModelFactory.create_model(**model_params)
@@ -204,9 +201,9 @@ class ExperimentRunner:
                                                               preprocessor, X_test, y_test, pipeline)
 
         # Эксперименты с удалением данных
-        methods_list = list(scores.items())
-        for method, vals in tqdm(methods_list, desc="Processing methods"):
-            tqdm.write(f"\nProcessing method: {method}")
+        for method, vals in scores.items():
+            if self.logger:
+                self.logger.log_message(f"\nProcessing method: {method}")
 
             self.results[f'{method}_0'] = self.results['orig']  # 0% удаления - baseline
 
@@ -220,10 +217,12 @@ class ExperimentRunner:
 
                 if removal_strategy == 'remove_lowest_influence':
                     idx_sorted = np.argsort(vals)[::-1]
-                    debug_print(f"Using remove_lowest_influence strategy for {method}")
+                    if self.logger:
+                        self.logger.log_message(f"  Using remove_lowest_influence strategy for {method}")
                 elif removal_strategy == 'remove_highest_influence':
                     idx_sorted = np.argsort(vals)
-                    debug_print(f"Using remove_highest_influence strategy for {method}")
+                    if self.logger:
+                        self.logger.log_message(f"  Using remove_highest_influence strategy for {method}")
 
                 # idx_sorted = np.argsort(vals)[::-1]
                 # if self.logger:
@@ -233,9 +232,10 @@ class ExperimentRunner:
             else:
                 # Для остальных методов: удаляем наименее влиятельные (самые низкие значения)
                 idx_sorted = np.argsort(vals)
-                debug_print(f"Using remove_lowest_influence strategy for {method}")
+                if self.logger:
+                    self.logger.log_message(f"  Using remove_lowest_influence strategy for {method}")
 
-            for pct in tqdm(n_remove_list, desc=f"  Removal percentages", leave=False):
+            for pct in n_remove_list:
 
                 n_to_remove = int(len(X_train) * pct / 100)
                 n_to_remove = max(1, n_to_remove)
@@ -248,14 +248,16 @@ class ExperimentRunner:
                 X_sub, y_sub = X_train.iloc[keep_mask], y_train.iloc[keep_mask]
 
                 if len(X_sub) < 10:
-                    tqdm.write(f"  Skipping - only {len(X_sub)} samples left (min 10 required)")
+                    if self.logger:
+                        self.logger.log_message(f"  Skipping - only {len(X_sub)} samples left (min 10 required)")
                     continue
 
                 # Check if target has only one class for classification tasks
                 if dataset_config and dataset_config.task_type in ['binary_classification', 'multiclass_classification']:
                     unique_classes = y_sub.nunique()
                     if unique_classes < 2:
-                        tqdm.write(f"  Skipping - only {unique_classes} class(es) remaining (need at least 2 for classification)")
+                        if self.logger:
+                            self.logger.log_message(f"  Skipping - only {unique_classes} class(es) remaining (need at least 2 for classification)")
                         continue
 
                 key = f'{method}_{pct}pct'
@@ -264,17 +266,17 @@ class ExperimentRunner:
                 self.results[key] = history
 
         # Случайное удаление - запускаем 5 раз для получения доверительных интервалов
-        tqdm.write("\nProcessing random removal (5 runs for confidence intervals)...")
         if self.logger:
-            self.logger.log_message("Processing random removal (5 runs for confidence intervals)...")
+            self.logger.log_message("Processing random removal")
 
-        n_random_runs = 5
+        n_random_runs = EXPERIMENT_CONFIG['n_random_runs']
         random_run_results = {}  # Словарь для хранения результатов всех запусков
         
-        for run_idx in tqdm(range(n_random_runs), desc="Random removal runs"):
-            debug_print(f"Random removal run {run_idx + 1}/{n_random_runs}...")
+        for run_idx in range(n_random_runs):
+            if self.logger:
+                self.logger.log_message(f"  Random removal run {run_idx + 1}/{n_random_runs}...")
             
-            for pct in tqdm(n_remove_list, desc=f"  Percentages (run {run_idx + 1})", leave=False):
+            for pct in n_remove_list:
                 n_to_remove = int(len(X_train) * pct / 100)
                 n_to_remove = max(1, n_to_remove)
                 n_to_remove = min(n_to_remove, len(X_train) - 10)

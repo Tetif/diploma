@@ -11,7 +11,7 @@ from sklearn.model_selection import train_test_split
 
 from config.settings import (
     DEBUG_MODE, EXPERIMENTS_BASE_DIR, DEVICE,
-    EXPERIMENT_CONFIG, CACHE_DIR, USE_CACHE, DISTILLATION_CONFIG, RANDOM_STATE,
+    EXPERIMENT_CONFIG, MODEL_CONFIGS, CACHE_DIR, USE_CACHE, DISTILLATION_CONFIG, RANDOM_STATE,
     CURRENT_DATASET, get_model_config
 )
 from config import DatasetRegistry
@@ -69,12 +69,11 @@ def main(dataset_name=None):
     else:
         logger.log_message("GPU not available, using CPU")
 
-    # Конфигурация эксперимента (единственный источник параметров)
+    # Конфигурация эксперимента
     config = {
         'debug_mode': DEBUG_MODE,
         'pyDVL_version': pydvl.__version__,
         'torch_version': torch.__version__,
-        'cuda_version': torch.version.cuda if gpu_available else None,
         'dataset': {
             'name': dataset_config.name,
             'task_type': dataset_config.task_type,
@@ -186,14 +185,12 @@ def main(dataset_name=None):
         logger.log_message(f"Using optimized parameters for {dataset_name} dataset")
         logger.log_message(f"Model config: {dataset_model_config}")
     except ValueError as e:
-        logger.log_message(f"Warning: {e}. Using minimal default parameters")
-        dataset_model_config = {}
+        logger.log_message(f"Warning: {e}. Using default parameters from MODEL_CONFIGS")
+        dataset_model_config = MODEL_CONFIGS.get(model_type, {})
 
     model_params = config['model_params'].copy()
     model_params['input_size'] = actual_input_size
     model_params['task_type'] = cfg.task_type
-    # Подхватываем параметр cv_folds из настроек эксперимента (если задан)
-    model_params['cv_folds'] = config['training_params'].get('cv_folds', 1)
     
     # Добавляем оптимальные параметры в model_params (но не перезаписываем уже установленные)
     for key, value in dataset_model_config.items():
@@ -208,11 +205,13 @@ def main(dataset_name=None):
     config['model_params'] = model_params
     config['training_params']['n_epochs'] = n_epochs
 
-    # Определяем список размеров для удаления влияющих семплов - ОДИН раз
+
     n_remove_list = np.linspace(1, 99, 33, dtype=int).tolist()
-    config['training_params']['n_remove_list'] = n_remove_list
-    config['training_params']['removal_strategy'] = model_params['removal_strategy']
-    
+
+    config['experiment_params'] = {
+        'n_remove_percentages': n_remove_list,
+        'removal_strategy': model_params['removal_strategy']
+    }
     logger.save_config(config)
     logger.log_message("Starting experiments")
 

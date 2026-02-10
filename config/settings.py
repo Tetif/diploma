@@ -1,12 +1,8 @@
 import torch
-from config.datasets.adult_config import ADULT_CONFIG
-from config.datasets.housing_config import HOUSING_CONFIG
-from config.datasets.wine_config import WINE_CONFIG
-from config.datasets.zillow_config import ZILLOW_CONFIG
 
 # ===== ВЫБОР ДАТАСЕТА =====
 # Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine'
-CURRENT_DATASET = 'wine'  # Можно менять для работы с разными датасетами
+CURRENT_DATASET = 'zillow'  # Можно менять для работы с разными датасетами
 
 # Глобальные флаги для отладки
 DEBUG_MODE = False
@@ -17,7 +13,7 @@ USE_CACHE = True  # Использовать ли кэш предобработ�
 # Настройки вычислений
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 N_JOBS = 8
-RANDOM_STATE = 42
+RANDOM_STATE = 39
 
 # Настройки pyDVL
 PYDVL_CONFIG = {
@@ -42,7 +38,13 @@ PYDVL_CONFIG = {
 }
 
 # Оптимальные параметры для каждого датасета и модели
-# Собраны из отдельных конфиг файлов в папке config/datasets/
+# Подобраны на основе характеристик датасета и типа задачи
+# Per-dataset configs are stored in separate modules under config/datasets
+from .datasets.adult_config import ADULT_CONFIG
+from .datasets.housing_config import HOUSING_CONFIG
+from .datasets.wine_config import WINE_CONFIG
+from .datasets.zillow_config import ZILLOW_CONFIG
+
 DATASET_MODEL_CONFIGS = {
     'adult': ADULT_CONFIG,
     'housing': HOUSING_CONFIG,
@@ -70,6 +72,9 @@ def get_model_config(dataset_name, model_type):
     
     return DATASET_MODEL_CONFIGS[dataset_name][model_type].copy()
 
+# Legacy MODEL_CONFIGS (для обратной совместимости) - использует конфиг для 'housing' по умолчанию
+MODEL_CONFIGS = DATASET_MODEL_CONFIGS['housing']
+
 # Настройки дистилляции
 DISTILLATION_CONFIG = {
     'use_distillation': True,
@@ -82,10 +87,10 @@ DISTILLATION_CONFIG = {
 EXPERIMENT_CONFIG = {
     'test_size': 0.2,
     'val_size': 0.1,
-    'n_epochs': 2,
-    'sample_size_percentage': 100,
-    'cv_folds': 2,
+    'n_epochs': 500,
+    'sample_size_percentage': 1,
     'n_remove_list': list(range(1, 100, 2)),
+    'n_random_runs': 3,
     'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']
 }
 

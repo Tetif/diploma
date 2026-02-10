@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from .base import BaseModel
-from config.settings import get_model_config, CURRENT_DATASET, DEVICE
+from config.settings import MODEL_CONFIGS, DEVICE
 from experiments.logger import debug_print
 
 class SimpleNN(nn.Module):
     def __init__(self, input_size, layers=None, dropout=0.2):
         super(SimpleNN, self).__init__()
         if layers is None:
-            layers = get_model_config(CURRENT_DATASET, 'pytorch')['simple']['layers']
+            layers = MODEL_CONFIGS['pytorch']['simple']['layers']
 
         modules = []
         prev_size = input_size
@@ -33,9 +33,9 @@ class ImprovedNN(nn.Module):
     def __init__(self, input_size, layers=None, dropout=None, batch_norm=True):
         super(ImprovedNN, self).__init__()
         if layers is None:
-            layers = get_model_config(CURRENT_DATASET, 'pytorch')['improved']['layers']
+            layers = MODEL_CONFIGS['pytorch']['improved']['layers']
         if dropout is None:
-            dropout = get_model_config(CURRENT_DATASET, 'pytorch')['improved']['dropout']
+            dropout = MODEL_CONFIGS['pytorch']['improved']['dropout']
 
         modules = []
         prev_size = input_size
@@ -64,7 +64,7 @@ class ImprovedNN(nn.Module):
 class SimpleFTTransformer(nn.Module):
     def __init__(self, input_size, **kwargs):
         super().__init__()
-        config = get_model_config(CURRENT_DATASET, 'pytorch')['ft_transformer_simple'].copy()
+        config = MODEL_CONFIGS['pytorch']['ft_transformer_simple'].copy()
         config.update(kwargs)
 
         self.d_model = config['d_model']
@@ -98,27 +98,14 @@ class PyTorchModelWrapper(BaseModel):
         self.device = device
         self.model_architecture = model_architecture
 
-        # Фильтруем параметры, чтобы передать только те, что нужны моделям
-        model_kwargs = {
-            'layers': kwargs.get('layers'),
-            'dropout': kwargs.get('dropout'),
-            'batch_norm': kwargs.get('batch_norm'),
-            'd_model': kwargs.get('d_model'),
-            'nhead': kwargs.get('nhead'),
-            'num_layers': kwargs.get('num_layers'),
-            'dim_feedforward': kwargs.get('dim_feedforward'),
-        }
-        # Удаляем None значения
-        model_kwargs = {k: v for k, v in model_kwargs.items() if v is not None}
-
         if model_architecture == 'improved':
-            self.model = ImprovedNN(input_size, **model_kwargs).to(device)
+            self.model = ImprovedNN(input_size, **kwargs).to(device)
         elif model_architecture == 'ft_transformer':
-            self.model = SimpleFTTransformer(input_size, **model_kwargs).to(device)
+            self.model = SimpleFTTransformer(input_size, **kwargs).to(device)
         elif model_architecture == 'ft_transformer_simple':
-            self.model = SimpleFTTransformer(input_size, **model_kwargs).to(device)
+            self.model = SimpleFTTransformer(input_size, **kwargs).to(device)
         else:
-            self.model = SimpleNN(input_size, **model_kwargs).to(device)
+            self.model = SimpleNN(input_size, **kwargs).to(device)
 
         self.optimizer = optim.AdamW(self.model.parameters(),
                                      lr=kwargs.get('learning_rate', 0.001),
@@ -191,7 +178,7 @@ class DistilledModelWrapper(BaseModel):
             self.student_model = SimpleNN(input_size, dropout=0.0).to(device)  # Отключаем dropout
 
         self.optimizer = optim.Adam(self.student_model.parameters(),
-                                    lr=get_model_config(CURRENT_DATASET, 'pytorch')['simple']['learning_rate'])
+                                    lr=MODEL_CONFIGS['pytorch']['simple']['learning_rate'])
         self.criterion = nn.MSELoss()
 
     def fit(self, X, y, epochs=None, X_val=None, y_val=None, **kwargs):

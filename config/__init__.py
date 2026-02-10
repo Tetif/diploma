@@ -7,13 +7,12 @@ from .settings import (
     N_JOBS,
     RANDOM_STATE,
     PYDVL_CONFIG,
-    DATASET_MODEL_CONFIGS,
+    MODEL_CONFIGS,
     EXPERIMENT_CONFIG,
     SYNTHETIC_DATA_CONFIG,
     CACHE_DIR,
     USE_CACHE,
-    DISTILLATION_CONFIG,
-    get_model_config
+    DISTILLATION_CONFIG
 )
 
 # Датасеты и их конфиги
@@ -31,13 +30,12 @@ __all__ = [
     'N_JOBS',
     'RANDOM_STATE',
     'PYDVL_CONFIG',
-    'DATASET_MODEL_CONFIGS',
+    'MODEL_CONFIGS',
     'EXPERIMENT_CONFIG',
     'SYNTHETIC_DATA_CONFIG',
     'CACHE_DIR',
     'USE_CACHE',
     'DISTILLATION_CONFIG',
-    'get_model_config',
     # Датасеты
     'BaseDatasetConfig',
     'PreprocessingConfig',
