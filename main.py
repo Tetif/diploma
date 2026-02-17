@@ -3,9 +3,9 @@ import pandas as pd
 import pydvl
 import torch
 import matplotlib.pyplot as plt
-import os
 import argparse
 from sklearn.preprocessing import LabelEncoder
+from tqdm import tqdm
 
 from sklearn.model_selection import train_test_split
 

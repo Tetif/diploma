@@ -11,3 +11,4 @@ joblib>=1.2.0
 scipy>=1.9.0
 dask[complete]>=2023.1.0
 zarr>=3.0.0
+tqdm>=4.60.0

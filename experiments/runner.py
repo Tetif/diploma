@@ -4,6 +4,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split, KFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_absolute_error
+from tqdm import tqdm
 
 from experiments.logger import debug_print
 from config.settings import EXPERIMENT_CONFIG, RANDOM_STATE
@@ -201,7 +202,7 @@ class ExperimentRunner:
                                                               preprocessor, X_test, y_test, pipeline)
 
         # Эксперименты с удалением данных
-        for method, vals in scores.items():
+        for method, vals in tqdm(scores.items(), desc="Processing methods", unit="method"):
             if self.logger:
                 self.logger.log_message(f"\nProcessing method: {method}")
 
@@ -235,7 +236,7 @@ class ExperimentRunner:
                 if self.logger:
                     self.logger.log_message(f"  Using remove_lowest_influence strategy for {method}")
 
-            for pct in n_remove_list:
+            for pct in tqdm(n_remove_list, desc=f"  {method} removal percentages", unit="pct", leave=False):
 
                 n_to_remove = int(len(X_train) * pct / 100)
                 n_to_remove = max(1, n_to_remove)
@@ -272,11 +273,11 @@ class ExperimentRunner:
         n_random_runs = EXPERIMENT_CONFIG['n_random_runs']
         random_run_results = {}  # Словарь для хранения результатов всех запусков
         
-        for run_idx in range(n_random_runs):
+        for run_idx in tqdm(range(n_random_runs), desc="Random removal runs", unit="run"):
             if self.logger:
                 self.logger.log_message(f"  Random removal run {run_idx + 1}/{n_random_runs}...")
             
-            for pct in n_remove_list:
+            for pct in tqdm(n_remove_list, desc=f"    Run {run_idx + 1} percentages", unit="pct", leave=False):
                 n_to_remove = int(len(X_train) * pct / 100)
                 n_to_remove = max(1, n_to_remove)
                 n_to_remove = min(n_to_remove, len(X_train) - 10)

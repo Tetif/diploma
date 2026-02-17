@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 from experiments.logger import debug_print
 
 
@@ -14,7 +15,7 @@ def plot_influence_distribution(scores, plot_name_suffix="", logger=None):
 
     colors = ['#2ecc71', '#3498db', '#e74c3c', '#9b59b6', '#f1c40f']
 
-    for idx, (method, color) in enumerate(zip(methods, colors)):
+    for idx, (method, color) in enumerate(tqdm(zip(methods, colors), total=n_methods, desc="Plotting distributions", unit="method", leave=False)):
         ax = axes[idx]
         method_scores = scores[method]
 
@@ -128,7 +129,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
     else:
         debug_print(f"Detected methods for plotting: {methods}")
 
-    for method in methods:
+    for method in tqdm(methods, desc="Plotting raw results", unit="method", leave=False):
         # Пропускаем random если выводятся несколько запусков random
         if method == 'random' and random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
             continue
@@ -154,7 +155,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
                          color=base_colors.get(method, '#99999999'), alpha=0.3, linewidth=1,
                          markersize=4, label=f'{method} (raw)')
 
-    for method in methods:
+    for method in tqdm(methods, desc="Plotting smoothed trends", unit="method", leave=False):
         # Пропускаем random если выводятся несколько запусков random
         if method == 'random' and random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
             continue
@@ -203,7 +204,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
         mean_values = []
         
         # Для каждой точки (0%, 10%, 20% и т.д.)
-        for pct_value in x_random:
+        for pct_value in tqdm(x_random, desc="Processing random run percentages", unit="pct", leave=False):
             if pct_value == 0:
                 # Для базовой точки (0%) нет данных в random_run_results
                 worst_values.append(np.nan)

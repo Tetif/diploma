@@ -22,7 +22,7 @@ from pydvl.influence.torch import (
 from pydvl.influence import InfluenceMode
 
 from experiments.logger import debug_print
-from config.settings import PYDVL_CONFIG, N_JOBS, RANDOM_STATE
+from config.settings import PYDVL_CONFIG, N_JOBS, RANDOM_STATE, get_influence_params
 from .scorers import ScorerFactory
 
 
@@ -261,10 +261,7 @@ class InfluenceMethods:
                               ]  # Добавлены новые методы для тестирования
 
             # Проверяем, является ли модель PyTorch моделью или дистиллированной
-            # Check for PyTorch models:
-            # 1. Direct nn.Module: wrapped.model is nn.Module
-            # 2. PyTorchModelWrapper: wrapped.model is PyTorchModelWrapper with .model as nn.Module
-            # 3. Student model for distillation: wrapped.student_model is nn.Module
+
             is_pytorch = False
             
             if hasattr(model_wrapper, 'model'):
@@ -281,7 +278,7 @@ class InfluenceMethods:
             if is_pytorch:
                 methods_to_use.extend([
                     'Influence',
-                    # 'ArnoldiInfluence',
+                    'ArnoldiInfluence',
                     # 'CgInfluence',
                     'LissaInfluence',
                     'NystroemSketchInfluence'
@@ -404,10 +401,17 @@ class InfluenceMethods:
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
+                        # Получить датасет-специфичные параметры влияния
+                        dataset_name = self.dataset_config.name if self.dataset_config else None
+                        if dataset_name:
+                            influence_params = get_influence_params(dataset_name)
+                        else:
+                            influence_params = PYDVL_CONFIG['influence_params']
+
                         self.methods['Influence'] = DirectInfluence(
                             influence_model,
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
-                            regularization=1e-6
+                            regularization=influence_params['regularization']
                         )
                         if self.logger:
                             self.logger.end_timing("Influence_setup")
@@ -425,11 +429,18 @@ class InfluenceMethods:
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
+                        # Получить датасет-специфичные параметры влияния
+                        dataset_name = self.dataset_config.name if self.dataset_config else None
+                        if dataset_name:
+                            influence_params = get_influence_params(dataset_name)
+                        else:
+                            influence_params = PYDVL_CONFIG['influence_params']
+
                         self.methods['ArnoldiInfluence'] = ArnoldiInfluence(
                             influence_model,
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
-                            rank=PYDVL_CONFIG['influence_params']['arnoldi_params']['rank'],
-                            regularization=PYDVL_CONFIG['influence_params']['regularization'],
+                            rank=influence_params['arnoldi_params']['rank'],
+                            regularization=influence_params['regularization'],
                             eigen_computation_on_gpu=False  # Disable GPU eigen to avoid cupy requirement
                         )
                         if self.logger:
@@ -448,12 +459,19 @@ class InfluenceMethods:
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
+                        # Получить датасет-специфичные параметры влияния
+                        dataset_name = self.dataset_config.name if self.dataset_config else None
+                        if dataset_name:
+                            influence_params = get_influence_params(dataset_name)
+                        else:
+                            influence_params = PYDVL_CONFIG['influence_params']
+
                         self.methods['CgInfluence'] = CgInfluence(
                             influence_model,
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
-                            maxiter=PYDVL_CONFIG['influence_params']['cg_params']['maxiter'],
-                            rtol=PYDVL_CONFIG['influence_params']['cg_params']['tolerance'],
-                            regularization=PYDVL_CONFIG['influence_params']['regularization']
+                            maxiter=influence_params['cg_params']['maxiter'],
+                            rtol=influence_params['cg_params']['tolerance'],
+                            regularization=influence_params['regularization']
                         )
                         if self.logger:
                             self.logger.end_timing("CgInfluence_setup")
@@ -471,12 +489,23 @@ class InfluenceMethods:
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
+                        # Получить датасет-специфичные параметры влияния
+                        dataset_name = self.dataset_config.name if self.dataset_config else None
+                        if dataset_name:
+                            influence_params = get_influence_params(dataset_name)
+                            if self.logger:
+                                self.logger.log_message(f"Influence: using dataset-specific params for {dataset_name}: scale={influence_params['lissa_params']['scale']}, damping={influence_params['lissa_params']['damping']}")
+                        else:
+                            influence_params = PYDVL_CONFIG['influence_params']
+                            if self.logger:
+                                self.logger.log_message(f"Influence: using default params (no dataset config)")
+
                         self.methods['LissaInfluence'] = LissaInfluence(
                             influence_model,
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
-                            scale=PYDVL_CONFIG['influence_params']['lissa_params']['scale'],
-                            dampen=PYDVL_CONFIG['influence_params']['lissa_params']['damping'],
-                            regularization=PYDVL_CONFIG['influence_params']['regularization'],
+                            scale=influence_params['lissa_params']['scale'],
+                            dampen=influence_params['lissa_params']['damping'],
+                            regularization=influence_params['regularization'],
                             rtol=0.1,
                             maxiter=100,
                             progress=True
@@ -497,11 +526,18 @@ class InfluenceMethods:
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
+                        # Получить датасет-специфичные параметры влияния
+                        dataset_name = self.dataset_config.name if self.dataset_config else None
+                        if dataset_name:
+                            influence_params = get_influence_params(dataset_name)
+                        else:
+                            influence_params = PYDVL_CONFIG['influence_params']
+
                         self.methods['NystroemSketchInfluence'] = NystroemSketchInfluence(
                             influence_model,
                             getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
-                            rank=PYDVL_CONFIG['influence_params']['nystroem_params']['rank'],
-                            regularization=PYDVL_CONFIG['influence_params']['regularization']
+                            rank=influence_params['nystroem_params']['rank'],
+                            regularization=influence_params['regularization']
                         )
                         if self.logger:
                             self.logger.end_timing("NystroemSketchInfluence_setup")

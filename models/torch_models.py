@@ -2,14 +2,45 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from .base import BaseModel
-from config.settings import MODEL_CONFIGS, DEVICE
+from config.settings import DEVICE
 from experiments.logger import debug_print
+
+# Default PyTorch model configurations
+DEFAULT_PYTORCH_PARAMS = {
+    'simple': {
+        'layers': [32, 16, 8],
+        'dropout': 0.2,
+        'learning_rate': 0.001
+    },
+    'improved': {
+        'layers': [64, 32, 16, 8],
+        'batch_norm': True,
+        'dropout': [0.2, 0.15, 0.1],
+        'learning_rate': 0.001
+    },
+    'ft_transformer': {
+        'd_model': 16,
+        'nhead': 4,
+        'num_layers': 2,
+        'dim_feedforward': 64,
+        'dropout': 0.1,
+        'learning_rate': 0.001
+    },
+    'ft_transformer_simple': {
+        'd_model': 8,
+        'nhead': 2,
+        'num_layers': 1,
+        'dim_feedforward': 32,
+        'dropout': 0.1,
+        'learning_rate': 0.001
+    }
+}
 
 class SimpleNN(nn.Module):
     def __init__(self, input_size, layers=None, dropout=0.2):
         super(SimpleNN, self).__init__()
         if layers is None:
-            layers = MODEL_CONFIGS['pytorch']['simple']['layers']
+            layers = DEFAULT_PYTORCH_PARAMS['simple']['layers']
 
         modules = []
         prev_size = input_size
@@ -33,9 +64,9 @@ class ImprovedNN(nn.Module):
     def __init__(self, input_size, layers=None, dropout=None, batch_norm=True):
         super(ImprovedNN, self).__init__()
         if layers is None:
-            layers = MODEL_CONFIGS['pytorch']['improved']['layers']
+            layers = DEFAULT_PYTORCH_PARAMS['improved']['layers']
         if dropout is None:
-            dropout = MODEL_CONFIGS['pytorch']['improved']['dropout']
+            dropout = DEFAULT_PYTORCH_PARAMS['improved']['dropout']
 
         modules = []
         prev_size = input_size
@@ -64,7 +95,7 @@ class ImprovedNN(nn.Module):
 class SimpleFTTransformer(nn.Module):
     def __init__(self, input_size, **kwargs):
         super().__init__()
-        config = MODEL_CONFIGS['pytorch']['ft_transformer_simple'].copy()
+        config = DEFAULT_PYTORCH_PARAMS['ft_transformer_simple'].copy()
         config.update(kwargs)
 
         self.d_model = config['d_model']
@@ -178,7 +209,7 @@ class DistilledModelWrapper(BaseModel):
             self.student_model = SimpleNN(input_size, dropout=0.0).to(device)  # Отключаем dropout
 
         self.optimizer = optim.Adam(self.student_model.parameters(),
-                                    lr=MODEL_CONFIGS['pytorch']['simple']['learning_rate'])
+                                    lr=DEFAULT_PYTORCH_PARAMS['simple']['learning_rate'])
         self.criterion = nn.MSELoss()
 
     def fit(self, X, y, epochs=None, X_val=None, y_val=None, **kwargs):

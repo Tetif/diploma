@@ -2,7 +2,7 @@ import torch
 
 # ===== ВЫБОР ДАТАСЕТА =====
 # Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine'
-CURRENT_DATASET = 'zillow'  # Можно менять для работы с разными датасетами
+CURRENT_DATASET = 'housing'  # Можно менять для работы с разными датасетами
 
 # Глобальные флаги для отладки
 DEBUG_MODE = False
@@ -13,7 +13,7 @@ USE_CACHE = True  # Использовать ли кэш предобработ�
 # Настройки вычислений
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 N_JOBS = 8
-RANDOM_STATE = 39
+RANDOM_STATE = 40
 
 # Настройки pyDVL
 PYDVL_CONFIG = {
@@ -37,9 +37,53 @@ PYDVL_CONFIG = {
     }
 }
 
+# ===== DATASET-SPECIFIC INFLUENCE PARAMETERS =====
+# Different datasets require different scale/damping values for numerically stable influence computation
+DATASET_INFLUENCE_PARAMS = {
+    'housing': {
+        'regularization': 1e-04,
+        'batch_size': 16,
+        'lissa_params': {'scale': 25, 'damping': 0.3},
+        'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
+        'arnoldi_params': {'rank': 10},
+        'nystroem_params': {'rank': 10}
+    },
+    'adult': {
+        'regularization': 1e-05,
+        'batch_size': 16,
+        'lissa_params': {'scale': 15, 'damping': 0.2},
+        'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
+        'arnoldi_params': {'rank': 10},
+        'nystroem_params': {'rank': 10}
+    },
+    'wine': {
+        'regularization': 1e-04,
+        'batch_size': 8,
+        'lissa_params': {'scale': 30, 'damping': 0.4},
+        'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
+        'arnoldi_params': {'rank': 8},
+        'nystroem_params': {'rank': 8}
+    },
+    'zillow': {
+        'regularization': 1e-06,
+        'batch_size': 32,
+        'lissa_params': {'scale': 10, 'damping': 0.1},
+        'cg_params': {'maxiter': 150, 'tolerance': 1e-3},
+        'arnoldi_params': {'rank': 20},
+        'nystroem_params': {'rank': 20}
+    }
+}
+
+def get_influence_params(dataset_name):
+    """Get dataset-specific influence parameters for numerical stability."""
+    from copy import deepcopy
+    if dataset_name not in DATASET_INFLUENCE_PARAMS:
+        return deepcopy(PYDVL_CONFIG['influence_params'])
+    return deepcopy(DATASET_INFLUENCE_PARAMS[dataset_name])
+
+
 # Оптимальные параметры для каждого датасета и модели
 # Подобраны на основе характеристик датасета и типа задачи
-# Per-dataset configs are stored in separate modules under config/datasets
 from .datasets.adult_config import ADULT_CONFIG
 from .datasets.housing_config import HOUSING_CONFIG
 from .datasets.wine_config import WINE_CONFIG
@@ -50,7 +94,7 @@ DATASET_MODEL_CONFIGS = {
     'housing': HOUSING_CONFIG,
     'wine': WINE_CONFIG,
     'zillow': ZILLOW_CONFIG
-}
+    }
 
 # Функция для получения конфигов модели для конкретного датасета
 def get_model_config(dataset_name, model_type):
@@ -72,8 +116,10 @@ def get_model_config(dataset_name, model_type):
     
     return DATASET_MODEL_CONFIGS[dataset_name][model_type].copy()
 
-# Legacy MODEL_CONFIGS (для обратной совместимости) - использует конфиг для 'housing' по умолчанию
-MODEL_CONFIGS = DATASET_MODEL_CONFIGS['housing']
+# MODEL_CONFIGS: Full mapping of all dataset configs (DATASET_MODEL_CONFIGS).
+# Use get_model_config(dataset_name, model_type) to get params for a specific dataset+model.
+# Models no longer depend on this directly; they receive config explicitly from ModelFactory.
+MODEL_CONFIGS = DATASET_MODEL_CONFIGS
 
 # Настройки дистилляции
 DISTILLATION_CONFIG = {
@@ -88,7 +134,7 @@ EXPERIMENT_CONFIG = {
     'test_size': 0.2,
     'val_size': 0.1,
     'n_epochs': 500,
-    'sample_size_percentage': 1,
+    'sample_size_percentage': 10,
     'n_remove_list': list(range(1, 100, 2)),
     'n_random_runs': 3,
     'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']

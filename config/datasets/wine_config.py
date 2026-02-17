@@ -22,8 +22,8 @@ WINE_CONFIG = {
     'xgboost': {
         'objective': 'reg:squarederror',
         'eval_metric': 'mae',
-        'max_depth': 4,
-        'learning_rate': 0.05,
+        'max_depth': 16,
+        'learning_rate': 0.01,
         'subsample': 0.8,
         'colsample_bytree': 0.8,
         'min_child_weight': 1,
