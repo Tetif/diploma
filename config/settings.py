@@ -2,7 +2,7 @@ import torch
 
 # ===== ВЫБОР ДАТАСЕТА =====
 # Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine'
-CURRENT_DATASET = 'housing'  # Можно менять для работы с разными датасетами
+CURRENT_DATASET = 'zillow'  # Можно менять для работы с разными датасетами
 
 # Глобальные флаги для отладки
 DEBUG_MODE = False
@@ -134,7 +134,7 @@ EXPERIMENT_CONFIG = {
     'test_size': 0.2,
     'val_size': 0.1,
     'n_epochs': 500,
-    'sample_size_percentage': 10,
+    'sample_size_percentage': 100,
     'n_remove_list': list(range(1, 100, 2)),
     'n_random_runs': 3,
     'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']

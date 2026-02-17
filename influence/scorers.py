@@ -5,8 +5,8 @@ from sklearn.metrics import mean_absolute_error, f1_score, accuracy_score
 from experiments.logger import debug_print
 
 
-def make_stable_neg_mae(fail_score=-1e6):
-    def stable_neg_mae_model(model, x, y):
+def make_stable_mae(fail_score=-1e6):
+    def stable_mae_model(model, x, y):
         try:
             if len(x) == 0 or len(y) == 0:
                 debug_print("Empty data received, returning fail_score")
@@ -57,8 +57,7 @@ def make_stable_neg_mae(fail_score=-1e6):
             y_true = y_np[:min_len]
             y_pred = y_pred[:min_len]
             mae = float(np.mean(np.abs(y_pred - y_true)))
-            score = -mae
-            return float(score)
+            return float(mae)
         except Exception as e:
             import traceback
             debug_print(f"Error in scorer: {e}")
@@ -85,7 +84,7 @@ def make_stable_neg_mae(fail_score=-1e6):
                 pass
             return float(fail_score)
 
-    return stable_neg_mae_model
+    return stable_mae_model
 
 
 def make_stable_f1_scorer(fail_score=-1e6, average='binary'):
@@ -188,9 +187,9 @@ class ScorerFactory:
     """Фабрика для создания скореров"""
 
     @staticmethod
-    def create_scorer(scorer_type='neg_mae', **kwargs):
-        if scorer_type == 'neg_mae':
-            return make_stable_neg_mae(**kwargs)
+    def create_scorer(scorer_type='mae', **kwargs):
+        if scorer_type == 'mae':
+            return make_stable_mae(**kwargs)
         elif scorer_type == 'f1':
             return make_stable_f1_scorer(average='binary', **kwargs)
         elif scorer_type == 'f1_weighted':
@@ -200,12 +199,12 @@ class ScorerFactory:
         elif scorer_type == 'accuracy':
             return make_stable_accuracy_scorer(**kwargs)
         else:
-            raise ValueError(f"Unknown scorer type: {scorer_type}. Available: neg_mae, f1, f1_weighted, f1_macro, accuracy")
+            raise ValueError(f"Unknown scorer type: {scorer_type}. Available: mae, f1, f1_weighted, f1_macro, accuracy")
 
 
 __all__ = [
     'ScorerFactory',
-    'make_stable_neg_mae',
+    'make_stable_mae',
     'make_stable_f1_scorer',
     'make_stable_accuracy_scorer'
 ]

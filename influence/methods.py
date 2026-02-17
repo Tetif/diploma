@@ -189,16 +189,16 @@ class InfluenceMethods:
         # Выбираем scorer в зависимости от типа задачи
         if self.dataset_config and hasattr(self.dataset_config, 'task_type'):
             if self.dataset_config.task_type == 'regression':
-                scorer_name = 'neg_mae'  # или другой регрессионный метрик
+                scorer_name = 'mae'  # или другой регрессионный метрик
             elif self.dataset_config.task_type == 'binary_classification':
                 scorer_name = 'f1'  # или другой метрик классификации
             elif self.dataset_config.task_type == 'multiclass_classification':
                 scorer_name = 'f1_weighted'
             else:
-                scorer_name = 'neg_mae'  # default
+                scorer_name = 'mae'  # default
         else:
             # Default для обратной совместимости
-            scorer_name = 'neg_mae'
+            scorer_name = 'mae'
             
         if self.logger:
             self.logger.log_message(f"Using scorer: {scorer_name}")
@@ -278,7 +278,7 @@ class InfluenceMethods:
             if is_pytorch:
                 methods_to_use.extend([
                     'Influence',
-                    'ArnoldiInfluence',
+                    # 'ArnoldiInfluence',
                     # 'CgInfluence',
                     'LissaInfluence',
                     'NystroemSketchInfluence'
