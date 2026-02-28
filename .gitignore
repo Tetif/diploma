@@ -9,3 +9,6 @@ __pycache__/
 /zillow
 /datasets/
 /catboost_info/
+overfitting_report.md
+docs/overfitting_causes_and_solutions.md
+docs/zillow_improvements.md

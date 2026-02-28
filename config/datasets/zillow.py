@@ -26,23 +26,24 @@ class ZillowConfig(BaseDatasetConfig):
     columns_to_drop = [
         'propertylandusetyp', 'fireplacecnt',
         'assessmentyear', 'taxamount', 'taxdelinquencyyear',
-        'landtaxvalueyear'
+        'rawcensustractandblock', 'censustractandblock'
     ]
 
-    # Основные категориальные признаки
+    # Основные категориальные признаки (колонки, реально присутствующие в данных)
     categorical_columns = [
         'propertycountylandusecode', 'propertylandusetypeid',
-        'heatingcodesplit', 'airconditioningtypeid'
+        'heatingorsystemtypeid', 'airconditioningtypeid'
     ]
 
-    # Основные числовые признаки (не полный список)
+    # Числовые признаки: геолокация, характеристики дома, стоимость, дата, feature engineering
     numeric_columns = [
         'latitude', 'longitude', 'bathroomcnt', 'bedroomcnt',
-        'buildingqualitytypeid', 'finishedsquarefeet12', 'fips',
-        'fullbathcnt', 'garagecarcnt', 'garagetypeid', 'yearbuilt',
-        'numberofstories', 'poolcnt', 'poolsizesquarefeet',
-        'roomcnt', 'storytypeid', 'structuretaxvalueyear',
-        'assessmentyear', 'lotsizesquarefeet', 'landtaxvalueyear'
+        'buildingqualitytypeid', 'calculatedfinishedsquarefeet', 'finishedsquarefeet12',
+        'fips', 'fullbathcnt', 'garagecarcnt', 'garagetotalsqft',
+        'yearbuilt', 'numberofstories', 'poolcnt', 'roomcnt',
+        'lotsizesquarefeet', 'structuretaxvaluedollarcnt', 'taxvaluedollarcnt',
+        'landtaxvaluedollarcnt', 'tx_month', 'tx_year', 'tx_month_sin', 'tx_month_cos',
+        'total_finished_sqft', 'age', 'price_per_sqft'
     ]
 
     # Параметры разделения
@@ -81,11 +82,33 @@ class ZillowConfig(BaseDatasetConfig):
         # Merge по parcelid
         df = df_train.merge(df_props, on='parcelid', how='left')
 
+        # Признаки из даты транзакции (критично для logerror — сезонность)
+        if 'transactiondate' in df.columns:
+            df['transactiondate'] = pd.to_datetime(df['transactiondate'], errors='coerce')
+            df['tx_month'] = df['transactiondate'].dt.month.fillna(6).astype(int)
+            df['tx_year'] = df['transactiondate'].dt.year.fillna(2016).astype(int)
+            df['tx_month_sin'] = np.sin(2 * np.pi * df['tx_month'] / 12)
+            df['tx_month_cos'] = np.cos(2 * np.pi * df['tx_month'] / 12)
+
+        # Feature engineering
+        fin_cols = [c for c in df.columns if 'finishedsquarefeet' in c.lower()]
+        if fin_cols:
+            df['total_finished_sqft'] = df[fin_cols].sum(axis=1)
+        if 'yearbuilt' in df.columns:
+            df['age'] = (2016 - df['yearbuilt'].fillna(2010)).clip(lower=0)
+        if 'structuretaxvaluedollarcnt' in df.columns and 'calculatedfinishedsquarefeet' in df.columns:
+            sqft = df['calculatedfinishedsquarefeet'].replace(0, np.nan)
+            df['price_per_sqft'] = df['structuretaxvaluedollarcnt'] / sqft
+
         # Проверка целевой переменной
         if self.target_column not in df.columns:
             raise ValueError(f"Target column '{self.target_column}' not found in dataset")
 
         target = df[self.target_column].copy()
+
+        # Клиппинг выбросов logerror (min -4.6, max 4.7 при std 0.16)
+        low, high = target.quantile([0.005, 0.995])
+        target = target.clip(low, high)
 
         # Убрать целевую переменную из признаков
         df = df.drop(columns=[self.target_column])

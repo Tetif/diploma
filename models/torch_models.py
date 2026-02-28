@@ -121,13 +121,20 @@ class SimpleFTTransformer(nn.Module):
 
 
 class PyTorchModelWrapper(BaseModel):
-    """Обертка для PyTorch моделей для совместимости"""
+    """Обертка для PyTorch моделей для совместимости.
+    Поддерживает регрессию (MSELoss) и бинарную классификацию (BCEWithLogitsLoss).
+    """
 
-    def __init__(self, input_size, model_architecture='simple', device=DEVICE, **kwargs):
+    def __init__(self, input_size, model_architecture='simple', device=DEVICE, task_type='regression', pos_weight=None, **kwargs):
         super().__init__()
         self.input_size = input_size
         self.device = device
         self.model_architecture = model_architecture
+        self.task_type = task_type
+
+        # learning_rate используем только для оптимизатора,
+        # чтобы не пробрасывать его в конструкторы SimpleNN/ImprovedNN
+        learning_rate = kwargs.pop('learning_rate', 0.001)
 
         if model_architecture == 'improved':
             self.model = ImprovedNN(input_size, **kwargs).to(device)
@@ -138,14 +145,23 @@ class PyTorchModelWrapper(BaseModel):
         else:
             self.model = SimpleNN(input_size, **kwargs).to(device)
 
-        self.optimizer = optim.AdamW(self.model.parameters(),
-                                     lr=kwargs.get('learning_rate', 0.001),
-                                     weight_decay=1e-4)  # L2 regularization
+        self.optimizer = optim.AdamW(
+            self.model.parameters(),
+            lr=learning_rate,
+            weight_decay=1e-4
+        )  # L2 regularization
         # Learning rate scheduler for adaptive learning rate reduction
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.5, patience=10
         )
-        self.criterion = nn.MSELoss()
+        # Бинарная классификация: BCEWithLogitsLoss (учитывает дисбаланс через pos_weight)
+        if task_type == 'binary_classification':
+            pw = None
+            if pos_weight is not None:
+                pw = torch.tensor([float(pos_weight)], device=device)
+            self.criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
+        else:
+            self.criterion = nn.MSELoss()
         self.val_losses_for_scheduler = []  # Track losses for scheduler
 
     def fit(self, X, y, epochs=5, **kwargs):
@@ -167,7 +183,11 @@ class PyTorchModelWrapper(BaseModel):
         self.model.eval()
         with torch.no_grad():
             X_tensor = torch.FloatTensor(X).to(self.device)
-            return self.model(X_tensor).cpu().numpy().flatten()
+            out = self.model(X_tensor)
+            if self.task_type == 'binary_classification':
+                # Возвращаем вероятности (sigmoid от логитов)
+                out = torch.sigmoid(out)
+            return out.cpu().numpy().flatten()
 
     def named_parameters(self):
         return self.model.named_parameters()

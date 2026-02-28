@@ -1,6 +1,7 @@
 """
 Configuration for Zillow dataset
-Regression, ~90K samples, 50+ features - large dataset
+Regression, ~90K samples, 50+ features - large dataset.
+Усиленные гиперпараметры для сложной задачи logerror.
 """
 
 RANDOM_STATE = 42
@@ -9,12 +10,12 @@ ZILLOW_CONFIG = {
     'lightgbm': {
         'objective': 'regression',
         'metric': 'mae',
-        'num_leaves': 127,  # Higher for larger dataset
-        'learning_rate': 0.05,
+        'num_leaves': 255,  # Увеличено для сложной задачи
+        'learning_rate': 0.03,
         'feature_fraction': 0.8,
         'bagging_fraction': 0.7,
         'bagging_freq': 5,
-        'min_data_in_leaf': 20,
+        'min_data_in_leaf': 15,
         'verbose': -1,
         'n_jobs': -1,
         'random_state': RANDOM_STATE
@@ -22,8 +23,8 @@ ZILLOW_CONFIG = {
     'xgboost': {
         'objective': 'reg:squarederror',
         'eval_metric': 'mae',
-        'max_depth': 8,
-        'learning_rate': 0.05,
+        'max_depth': 10,  # Увеличено
+        'learning_rate': 0.03,
         'subsample': 0.7,
         'colsample_bytree': 0.7,
         'min_child_weight': 5,
@@ -32,7 +33,7 @@ ZILLOW_CONFIG = {
         'n_jobs': -1
     },
     'catboost': {
-        'iterations': 200,
+        'iterations': 300,  # Больше итераций
         'learning_rate': 0.05,
         'depth': 8,
         'loss_function': 'MAE',
@@ -41,16 +42,16 @@ ZILLOW_CONFIG = {
         'thread_count': -1
     },
     'random_forest': {
-        'n_estimators': 150,
-        'max_depth': 20,
-        'min_samples_split': 10,
-        'min_samples_leaf': 4,
+        'n_estimators': 200,
+        'max_depth': 25,
+        'min_samples_split': 8,
+        'min_samples_leaf': 3,
         'random_state': RANDOM_STATE,
         'n_jobs': -1
     },
     'pytorch': {
         'simple': {
-            'layers': [128, 64, 32],
+            'layers': [256, 128, 64, 32],  # Глубже
             'dropout': 0.3,
             'learning_rate': 0.001
         },
