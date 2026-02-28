@@ -12,3 +12,24 @@ scipy>=1.9.0
 dask[complete]>=2023.1.0
 zarr>=3.0.0
 tqdm>=4.60.0
+
+# FastAPI & Uvicorn
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# Streamlit
+streamlit>=1.28.0
+streamlit-option-menu>=0.3.6
+
+# Plotting & Visualization
+plotly>=5.17.0
+seaborn>=0.13.0
+
+# HTTP & Networking
+requests>=2.31.0
+httpx>=0.25.0
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0.1

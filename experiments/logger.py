@@ -66,13 +66,14 @@ class ExperimentLogger:
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         self.log_message(f"Plot saved: {plot_name}.png")
 
-    def save_results(self, results, scores, scores_raw, n_remove_list):
+    def save_results(self, results, scores, scores_raw, n_remove_list, random_run_results=None):
         """Сохраняет результаты в pickle файл"""
         data_to_save = {
             'results': results,
             'scores': scores,
             'scores_raw': scores_raw,
             'n_remove_list': n_remove_list,
+            'random_run_results': random_run_results,
             'timestamp': pd.Timestamp.now(),
             'experiment_dir': str(self.experiment_dir),
             'timings': self.timings

@@ -36,7 +36,7 @@ from influence.utils import get_influence_statistics
 def main(dataset_name=None):
     """
     Основная функция для запуска экспериментов с любым датасетом
-    
+
     Args:
         dataset_name: Имя датасета ('zillow', 'adult', 'housing', 'wine')
                      Если None, используется CURRENT_DATASET из settings
@@ -44,7 +44,7 @@ def main(dataset_name=None):
     # Выбираем датасет
     if dataset_name is None:
         dataset_name = CURRENT_DATASET
-    
+
     # Получаем конфиг датасета
     try:
         dataset_config = DatasetRegistry.get(dataset_name)
@@ -52,7 +52,7 @@ def main(dataset_name=None):
         print(f"Error: {e}")
         print(f"Available datasets: {', '.join(DatasetRegistry.list())}")
         return
-    
+
     set_random_seeds(RANDOM_STATE)
     logger = ExperimentLogger(base_dir=EXPERIMENTS_BASE_DIR)
 
@@ -86,7 +86,7 @@ def main(dataset_name=None):
             'model_architecture': 'simple',  # Для pytorch: simple, improved или ft_transformer
             'input_size': 'auto',
             'device': DEVICE,
-            'removal_strategy': 'remove_lowest_influence',
+            'removal_strategy': 'remove_lowest_influence', #lowest
             # Параметры дистилляции
             'use_distillation': DISTILLATION_CONFIG['use_distillation'],
             'distillation_epochs': DISTILLATION_CONFIG['distillation_epochs'],
@@ -101,7 +101,7 @@ def main(dataset_name=None):
 
     # Загружаем данные используя фабрику
     X, y, cfg = DataLoaderFactory.load_dataset(dataset_config, logger)
-    
+
     logger.log_message(f"Data loaded: {X.shape[0]} rows, {X.shape[1]} columns")
     logger.log_message(f"Target shape: {y.shape}")
 
@@ -178,7 +178,7 @@ def main(dataset_name=None):
     # Получаем оптимальные параметры модели для этого датасета
     model_type = config['model_params']['model_type']
     logger.log_message(f"\nLoading optimal model configuration for {dataset_name} + {model_type}...")
-    
+
     try:
         # Получаем параметры модели для конкретного датасета
         dataset_model_config = get_model_config(dataset_name, model_type)
@@ -191,7 +191,7 @@ def main(dataset_name=None):
     model_params = config['model_params'].copy()
     model_params['input_size'] = actual_input_size
     model_params['task_type'] = cfg.task_type
-    
+
     # Добавляем оптимальные параметры в model_params (но не перезаписываем уже установленные)
     for key, value in dataset_model_config.items():
         if key not in model_params or key in ['learning_rate', 'num_leaves', 'max_depth', 'iterations', 'n_estimators', 'layers', 'dropout']:
@@ -217,29 +217,27 @@ def main(dataset_name=None):
 
     experiment_runner = ExperimentRunner(logger)
 
-    results, scores, scores_raw = experiment_runner.run_experiments(
-        X_train, 
-        y_train, 
-        X_test, 
-        y_test, 
-        X_holdout_validation, 
+    results, scores, scores_raw, random_run_results = experiment_runner.run_experiments(
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        X_holdout_validation,
         y_holdout_validation,
-        preprocessor, 
+        preprocessor,
         model_params,
-        n_remove_list, 
+        n_remove_list,
         n_epochs,
         dataset_config=dataset_config
     )
 
     # Визуализация
     logger.log_message("Plotting results...")
-    logger.save_results(results, scores, scores_raw, n_remove_list)
+    logger.save_results(results, scores, scores_raw, n_remove_list, random_run_results=random_run_results)
 
     plot_influence_distribution(scores_raw, "influence_scores", logger)
     plt.show()
 
-    # Получаем random_run_results из experiment_runner если они доступны
-    random_run_results = getattr(experiment_runner, 'random_run_results', None)
     plot_results_enhanced(results, n_remove_list, logger, random_run_results=random_run_results)
     plt.show()
 

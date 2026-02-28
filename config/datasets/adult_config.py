@@ -9,7 +9,7 @@ ADULT_CONFIG = {
     'lightgbm': {
         'objective': 'binary',
         'metric': 'binary_logloss',
-        'num_leaves': 63,  # Higher for classification
+        'num_leaves': 63,
         'learning_rate': 0.05,
         'feature_fraction': 0.85,
         'bagging_fraction': 0.75,

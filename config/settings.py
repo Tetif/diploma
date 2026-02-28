@@ -2,18 +2,18 @@ import torch
 
 # ===== ВЫБОР ДАТАСЕТА =====
 # Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine'
-CURRENT_DATASET = 'zillow'  # Можно менять для работы с разными датасетами
+CURRENT_DATASET = 'adult'
 
 # Глобальные флаги для отладки
 DEBUG_MODE = False
 EXPERIMENTS_BASE_DIR = "experiment_logs"
-CACHE_DIR = "data_cache"  # Папка для кэширования предобработанных данных
-USE_CACHE = True  # Использовать ли кэш предобработанных данных
+CACHE_DIR = "data_cache"
+USE_CACHE = True
 
 # Настройки вычислений
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 N_JOBS = 8
-RANDOM_STATE = 40
+RANDOM_STATE = 42
 
 # Настройки pyDVL
 PYDVL_CONFIG = {
@@ -21,12 +21,12 @@ PYDVL_CONFIG = {
     'rtol': 0.01,
     'max_updates': 1000,
     'beta_shapley_params': {'alpha': 0.1, 'beta': 0.1},
-    # Настройки для новых методов
+
     'tmc_shapley_params': {'n_samples': 10},
     'knn_shapley_params': {'n_neighbors': 5},
     'banzhaf_params': {'n_samples': 10},
     'least_core_params': {'epsilon': 0.1, 'n_samples': 10},
-    # Настройки для influence методов
+
     'influence_params': {
         'regularization': 1e-06,
         'batch_size': 16,  # Для DataLoader в influence методах
@@ -38,7 +38,6 @@ PYDVL_CONFIG = {
 }
 
 # ===== DATASET-SPECIFIC INFLUENCE PARAMETERS =====
-# Different datasets require different scale/damping values for numerically stable influence computation
 DATASET_INFLUENCE_PARAMS = {
     'housing': {
         'regularization': 1e-04,
@@ -75,7 +74,6 @@ DATASET_INFLUENCE_PARAMS = {
 }
 
 def get_influence_params(dataset_name):
-    """Get dataset-specific influence parameters for numerical stability."""
     from copy import deepcopy
     if dataset_name not in DATASET_INFLUENCE_PARAMS:
         return deepcopy(PYDVL_CONFIG['influence_params'])
@@ -83,7 +81,6 @@ def get_influence_params(dataset_name):
 
 
 # Оптимальные параметры для каждого датасета и модели
-# Подобраны на основе характеристик датасета и типа задачи
 from .datasets.adult_config import ADULT_CONFIG
 from .datasets.housing_config import HOUSING_CONFIG
 from .datasets.wine_config import WINE_CONFIG
@@ -100,31 +97,29 @@ DATASET_MODEL_CONFIGS = {
 def get_model_config(dataset_name, model_type):
     """
     Получить конфигурацию модели для конкретного датасета.
-    
+
     Args:
         dataset_name (str): Имя датасета ('adult', 'housing', 'wine', 'zillow')
         model_type (str): Тип модели ('lightgbm', 'xgboost', 'catboost', 'random_forest', 'pytorch')
-    
+
     Returns:
         dict: Конфигурация модели для данного датасета
     """
     if dataset_name not in DATASET_MODEL_CONFIGS:
         raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(DATASET_MODEL_CONFIGS.keys())}")
-    
+
     if model_type not in DATASET_MODEL_CONFIGS[dataset_name]:
         raise ValueError(f"Unknown model type: {model_type}. Available: {list(DATASET_MODEL_CONFIGS[dataset_name].keys())}")
-    
+
     return DATASET_MODEL_CONFIGS[dataset_name][model_type].copy()
 
-# MODEL_CONFIGS: Full mapping of all dataset configs (DATASET_MODEL_CONFIGS).
-# Use get_model_config(dataset_name, model_type) to get params for a specific dataset+model.
-# Models no longer depend on this directly; they receive config explicitly from ModelFactory.
+
 MODEL_CONFIGS = DATASET_MODEL_CONFIGS
 
 # Настройки дистилляции
 DISTILLATION_CONFIG = {
     'use_distillation': True,
-    'distillation_epochs': 200,  # Количество эпох для дистилляции
+    'distillation_epochs': 500,  # Количество эпох для дистилляции
     'temperature': 2.0,  # Температура для дистилляции (пока не используется)
     'student_architecture': 'simple'  # Архитектура студенческой модели: 'simple' или 'improved'
 }
@@ -136,7 +131,7 @@ EXPERIMENT_CONFIG = {
     'n_epochs': 500,
     'sample_size_percentage': 100,
     'n_remove_list': list(range(1, 100, 2)),
-    'n_random_runs': 3,
+    'n_random_runs': 1,
     'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']
 }
 
@@ -150,5 +145,4 @@ SYNTHETIC_DATA_CONFIG = {
     'n_jobs': 1
 }
 
-# Экспортируем CURRENT_DATASET для удобства
 __all__ = ['CURRENT_DATASET']

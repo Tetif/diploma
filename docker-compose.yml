@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - API_BASE_URL=http://localhost:8000
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./microservice_storage:/app/microservice_storage
+      - ./experiment_logs:/app/experiment_logs
+      - ./data_cache:/app/data_cache
+    command: >
+      sh -c "python microservice/run_api.py"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  ui:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - API_BASE_URL=http://api:8000
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./microservice_storage:/app/microservice_storage
+    command: >
+      sh -c "python microservice/run_ui.py"
+
+volumes:
+  microservice_storage:
+  experiment_logs:
+  data_cache:

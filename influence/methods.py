@@ -249,6 +249,7 @@ class InfluenceMethods:
 
         # Определение методов для использования
         if methods_to_use is None:
+
             methods_to_use = [
                 # 'LOO'
                 # , 'DataShapley'
@@ -258,12 +259,13 @@ class InfluenceMethods:
                 # , 'KNNShapley'  # Только для классификации
                 # , 'DataOOB'     # Требует специальной настройки
                 # , 'LeastCore'
-                              ]  # Добавлены новые методы для тестирования
+                              ]
+
 
             # Проверяем, является ли модель PyTorch моделью или дистиллированной
 
             is_pytorch = False
-            
+
             if hasattr(model_wrapper, 'model'):
                 inner_model = getattr(model_wrapper, 'model', None)
                 if isinstance(inner_model, torch.nn.Module):
@@ -271,17 +273,17 @@ class InfluenceMethods:
                 elif hasattr(inner_model, 'model') and isinstance(getattr(inner_model, 'model', None), torch.nn.Module):
                     # PyTorchModelWrapper case
                     is_pytorch = True
-            
+
             if hasattr(model_wrapper, 'student_model') and isinstance(getattr(model_wrapper, 'student_model', None), torch.nn.Module):
                 is_pytorch = True
-            
+
             if is_pytorch:
                 methods_to_use.extend([
                     'Influence',
                     # 'ArnoldiInfluence',
                     # 'CgInfluence',
-                    'LissaInfluence',
-                    'NystroemSketchInfluence'
+                    # 'LissaInfluence',
+                    # 'NystroemSketchInfluence'
                 ])
 
             # Добавляем Shapley методы только если не дистилляция (слишком медленно)
