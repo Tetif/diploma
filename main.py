@@ -11,14 +11,13 @@ from sklearn.model_selection import train_test_split
 
 from config.settings import (
     DEBUG_MODE, EXPERIMENTS_BASE_DIR, DEVICE,
-    EXPERIMENT_CONFIG, MODEL_CONFIGS, CACHE_DIR, USE_CACHE, DISTILLATION_CONFIG, RANDOM_STATE,
+    EXPERIMENT_CONFIG, DISTILLATION_CONFIG, RANDOM_STATE,
     CURRENT_DATASET, get_model_config
 )
 from config import DatasetRegistry
 from experiments.logger import ExperimentLogger
 from data.loader import DataLoaderFactory
 from data.preprocessing import PreprocessorFactory
-from data.cache import DataCache
 from models.factory import ModelFactory
 from experiments.runner import ExperimentRunner
 from visualization.plots import (
@@ -38,7 +37,7 @@ def main(dataset_name=None):
     Основная функция для запуска экспериментов с любым датасетом
 
     Args:
-        dataset_name: Имя датасета ('zillow', 'adult', 'housing', 'wine')
+        dataset_name: Имя датасета ('zillow', 'adult', 'housing', 'wine', 'covertype', 'electric', 'mnist', 'imdb', 'cifar10').
                      Если None, используется CURRENT_DATASET из settings
     """
     # Выбираем датасет
@@ -82,8 +81,8 @@ def main(dataset_name=None):
             'metrics': dataset_config.metrics
         },
         'model_params': {
-            'model_type': 'random_forest',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
-            'model_architecture': 'simple',  # Для pytorch: simple, improved или ft_transformer
+            'model_type': 'pytorch',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
+            'model_architecture': 'simple',  # Для pytorch: simple      , improved или ft_transformer
             'input_size': 'auto',
             'device': DEVICE,
             'removal_strategy': 'remove_lowest_influence', #lowest
@@ -185,8 +184,9 @@ def main(dataset_name=None):
         logger.log_message(f"Using optimized parameters for {dataset_name} dataset")
         logger.log_message(f"Model config: {dataset_model_config}")
     except ValueError as e:
-        logger.log_message(f"Warning: {e}. Using default parameters from MODEL_CONFIGS")
-        dataset_model_config = MODEL_CONFIGS.get(model_type, {})
+        logger.log_message(f"Warning: {e}. Using default parameters.")
+        from config.settings import DATASET_MODEL_CONFIGS
+        dataset_model_config = DATASET_MODEL_CONFIGS.get(dataset_name, {}).get(model_type, {})
 
     model_params = config['model_params'].copy()
     model_params['input_size'] = actual_input_size

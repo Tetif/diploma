@@ -28,18 +28,18 @@ def _extract_numeric_values_from_result(result):
             if items is not None:
                 items_count = len(list(items)) if hasattr(items, '__len__') else 'unknown'
                 debug_print(f"[DEBUG] Success with {method_name}, got {items_count} items")
-                print(f"Success with {method_name}, got {items_count} items")
+                debug_print(f"Success with {method_name}, got {items_count} items")
                 items_list = list(items) if hasattr(items, '__iter__') and not isinstance(items, (int, float)) else [items]
                 if items_list:
                     debug_print(f"[DEBUG] First item type: {type(items_list[0])}, repr: {repr(items_list[0])[:150]}")
                 break
         except Exception as e:
             debug_print(f"[DEBUG] Failed {method_name}: {e}")
-            print(f"Failed {method_name}: {e}")
+            debug_print(f"Failed {method_name}: {e}")
             continue
     else:
         debug_print("[DEBUG] All extraction methods failed, returning zeros")
-        print("All extraction methods failed, returning zeros")
+        debug_print("All extraction methods failed, returning zeros")
         return np.array([])
 
     numeric = []
@@ -128,14 +128,14 @@ def _extract_numeric_values_from_result(result):
             median = np.median(finite_vals)
             mean = np.mean(finite_vals)
 
-            print(f"RAW VALUES BEFORE PROCESSING:")
-            print(f"  Min: {np.min(finite_vals):.10f}")
-            print(f"  Max: {np.max(finite_vals):.10f}")
-            print(f"  Mean: {mean:.10f}")
-            print(f"  Median: {median:.10f}")
-            print(f"  P1: {p1:.10f}")
-            print(f"  P99: {p99:.10f}")
-            print(f"  Std: {np.std(finite_vals):.10f}")
+            debug_print(f"RAW VALUES BEFORE PROCESSING:")
+            debug_print(f"  Min: {np.min(finite_vals):.10f}")
+            debug_print(f"  Max: {np.max(finite_vals):.10f}")
+            debug_print(f"  Mean: {mean:.10f}")
+            debug_print(f"  Median: {median:.10f}")
+            debug_print(f"  P1: {p1:.10f}")
+            debug_print(f"  P99: {p99:.10f}")
+            debug_print(f"  Std: {np.std(finite_vals):.10f}")
 
             if np.max(finite_vals) - np.min(finite_vals) < 1e-10:
                 debug_print("WARNING: All values are essentially the same!")

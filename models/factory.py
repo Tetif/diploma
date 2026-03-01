@@ -27,43 +27,45 @@ class ModelFactory:
         model_architecture = model_params.get('model_architecture', 'simple')
         use_distillation = model_params.get('use_distillation', False)
         distillation_epochs = model_params.get('distillation_epochs', 50)
+        task_type = model_params.get('task_type', 'regression')
 
         # Extracting model-specific parameters (those that are not generic params)
         # These will be passed to model constructors
         model_specific_params = ModelFactory._extract_model_params(model_params, model_type)
+        tree_kwargs = {'task_type': task_type}
 
         if model_type == 'lightgbm':
             if use_distillation:
-                base_model = LightGBMModel(params=model_specific_params)
+                base_model = LightGBMModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
                 return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
-            return LightGBMModel(params=model_specific_params)
+            return LightGBMModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'xgboost':
             if use_distillation:
-                base_model = XGBoostModel(params=model_specific_params)
+                base_model = XGBoostModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
                 return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
-            return XGBoostModel(params=model_specific_params)
+            return XGBoostModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'random_forest':
             if use_distillation:
-                base_model = RandomForestModel(params=model_specific_params)
+                base_model = RandomForestModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
                 return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
-            return RandomForestModel(params=model_specific_params)
+            return RandomForestModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'catboost':
             if use_distillation:
-                base_model = CatBoostModel(params=model_specific_params)
+                base_model = CatBoostModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
                 return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
-            return CatBoostModel(params=model_specific_params)
+            return CatBoostModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'pytorch':
             if input_size is None:
                 raise ValueError("Для PyTorch модели требуется input_size")
-            return PyTorchModelWrapper(input_size, device=device, model_architecture=model_architecture)
+            return PyTorchModelWrapper(input_size, device=device, model_architecture=model_architecture, task_type=task_type)
         else:
             raise ValueError(f"Неизвестный тип модели: {model_type}")
 
@@ -107,7 +109,12 @@ class ModelFactory:
         return ['lightgbm', 'xgboost', 'random_forest', 'catboost', 'pytorch']
 
     @staticmethod
-    def get_model_config(model_type):
-        """Возвращает конфигурацию для модели"""
-        from config.settings import MODEL_CONFIGS
-        return MODEL_CONFIGS.get(model_type, {})
+    def get_model_config(model_type, dataset_name=None):
+        """
+        Возвращает конфигурацию для модели.
+        Для конфига по датасету и типу модели используйте config.settings.get_model_config(dataset_name, model_type).
+        """
+        if dataset_name is not None:
+            from config.settings import get_model_config as settings_get_model_config
+            return settings_get_model_config(dataset_name, model_type)
+        return {}

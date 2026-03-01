@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader
 from joblib import parallel_config
 from scipy.stats import rankdata
+from tqdm import tqdm
 
 from pydvl.valuation.dataset import Dataset
 from pydvl.valuation.utility import ModelUtility
@@ -206,6 +207,8 @@ class InfluenceMethods:
         scorer_callable = ScorerFactory.create_scorer(scorer_name)
         model_wrapper = pipeline.named_steps['model']
         
+        # Store original model for criterion (SafeModelWrapper does not expose it)
+        _inner_model_for_criterion = model_wrapper
         # CRITICAL: Wrap model in SafeModelWrapper to handle empty datasets during valuation
         model_wrapper = SafeModelWrapper(model_wrapper)
 
@@ -279,11 +282,11 @@ class InfluenceMethods:
 
             if is_pytorch:
                 methods_to_use.extend([
-                    'Influence',
-                    # 'ArnoldiInfluence',
+                    # 'Influence',
+                    'ArnoldiInfluence',
                     # 'CgInfluence',
                     # 'LissaInfluence',
-                    # 'NystroemSketchInfluence'
+                    'NystroemSketchInfluence'
                 ])
 
             # Добавляем Shapley методы только если не дистилляция (слишком медленно)
@@ -410,9 +413,15 @@ class InfluenceMethods:
                         else:
                             influence_params = PYDVL_CONFIG['influence_params']
 
+                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
+                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
+                            criterion = torch.nn.BCEWithLogitsLoss()
+                        if criterion is None:
+                            criterion = torch.nn.MSELoss()
+
                         self.methods['Influence'] = DirectInfluence(
                             influence_model,
-                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            criterion,
                             regularization=influence_params['regularization']
                         )
                         if self.logger:
@@ -438,9 +447,15 @@ class InfluenceMethods:
                         else:
                             influence_params = PYDVL_CONFIG['influence_params']
 
+                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
+                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
+                            criterion = torch.nn.BCEWithLogitsLoss()
+                        if criterion is None:
+                            criterion = torch.nn.MSELoss()
+
                         self.methods['ArnoldiInfluence'] = ArnoldiInfluence(
                             influence_model,
-                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            criterion,
                             rank=influence_params['arnoldi_params']['rank'],
                             regularization=influence_params['regularization'],
                             eigen_computation_on_gpu=False  # Disable GPU eigen to avoid cupy requirement
@@ -468,9 +483,15 @@ class InfluenceMethods:
                         else:
                             influence_params = PYDVL_CONFIG['influence_params']
 
+                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
+                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
+                            criterion = torch.nn.BCEWithLogitsLoss()
+                        if criterion is None:
+                            criterion = torch.nn.MSELoss()
+
                         self.methods['CgInfluence'] = CgInfluence(
                             influence_model,
-                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            criterion,
                             maxiter=influence_params['cg_params']['maxiter'],
                             rtol=influence_params['cg_params']['tolerance'],
                             regularization=influence_params['regularization']
@@ -502,9 +523,15 @@ class InfluenceMethods:
                             if self.logger:
                                 self.logger.log_message(f"Influence: using default params (no dataset config)")
 
+                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
+                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
+                            criterion = torch.nn.BCEWithLogitsLoss()
+                        if criterion is None:
+                            criterion = torch.nn.MSELoss()
+
                         self.methods['LissaInfluence'] = LissaInfluence(
                             influence_model,
-                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            criterion,
                             scale=influence_params['lissa_params']['scale'],
                             dampen=influence_params['lissa_params']['damping'],
                             regularization=influence_params['regularization'],
@@ -535,9 +562,15 @@ class InfluenceMethods:
                         else:
                             influence_params = PYDVL_CONFIG['influence_params']
 
+                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
+                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
+                            criterion = torch.nn.BCEWithLogitsLoss()
+                        if criterion is None:
+                            criterion = torch.nn.MSELoss()
+
                         self.methods['NystroemSketchInfluence'] = NystroemSketchInfluence(
                             influence_model,
-                            getattr(model_wrapper, "criterion", torch.nn.MSELoss()),
+                            criterion,
                             rank=influence_params['nystroem_params']['rank'],
                             regularization=influence_params['regularization']
                         )
@@ -659,26 +692,48 @@ class InfluenceMethods:
                     except Exception as e:
                         debug_print(f"Failed to analyze influence_factors: {e}")
 
-                    scores_raw_val = infl.influences_from_factors(
-                        zf,
-                        torch.FloatTensor(X_train_t),
-                        torch.FloatTensor(y_train_arr.reshape(-1, 1)),
-                        mode=InfluenceMode.Up
-                    ).cpu().numpy()
-
-                    # Агрегирование влияний
-                    if scores_raw_val.ndim == 2:
-                        per_train = np.abs(scores_raw_val).sum(axis=0)
-                    elif scores_raw_val.ndim > 2:
-                        per_train = np.abs(scores_raw_val).sum(axis=tuple(range(scores_raw_val.ndim - 1)))
-                    else:
-                        per_train = np.abs(scores_raw_val).flatten()
+                    # Батчирование по валидации, чтобы не создавать матрицу (n_val × n_train) в GPU
+                    n_val = zf.shape[0]
+                    n_train = X_train_t.shape[0]
+                    _params = get_influence_params(self.dataset_config.name) if self.dataset_config and getattr(self.dataset_config, 'name', None) else PYDVL_CONFIG['influence_params']
+                    val_batch_size = _params.get('influence_val_batch_size', PYDVL_CONFIG['influence_params'].get('influence_val_batch_size', 500))
+                    per_train = np.zeros(n_train, dtype=np.float64)
+                    X_train_tensor = torch.FloatTensor(X_train_t)
+                    y_train_tensor = torch.FloatTensor(y_train_arr.reshape(-1, 1))
+                    n_batches_val = (n_val + val_batch_size - 1) // val_batch_size
+                    if self.logger:
+                        self.logger.log_message(
+                            f"Influence: computing influences in val batches (batch_size={val_batch_size}, total val={n_val}, batches={n_batches_val})"
+                        )
+                    for start in tqdm(
+                            range(0, n_val, val_batch_size),
+                            total=n_batches_val,
+                            desc="Influence val batches",
+                            unit="batch"
+                    ):
+                        end = min(start + val_batch_size, n_val)
+                        zf_batch = zf[start:end]
+                        scores_batch = infl.influences_from_factors(
+                            zf_batch,
+                            X_train_tensor,
+                            y_train_tensor,
+                            mode=InfluenceMode.Up
+                        ).cpu().numpy()
+                        if scores_batch.ndim == 2:
+                            per_train += np.abs(scores_batch).sum(axis=0)
+                        elif scores_batch.ndim > 2:
+                            per_train += np.abs(scores_batch).sum(axis=tuple(range(scores_batch.ndim - 1)))
+                        else:
+                            per_train += np.abs(scores_batch).flatten()
+                        del scores_batch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
 
                     # Diagnostics for raw influence values
                     try:
                         if self.logger:
                             self.logger.log_message(
-                                f"Influence: raw influences shape={scores_raw_val.shape}, aggregated per-train length={len(per_train)}"
+                                f"Influence: aggregated per-train length={len(per_train)} (computed in val batches of {val_batch_size})"
                             )
                             nan_count = np.isnan(per_train).sum()
                             inf_count = np.isinf(per_train).sum()

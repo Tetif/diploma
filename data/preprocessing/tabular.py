@@ -4,6 +4,7 @@
 
 import pandas as pd
 import numpy as np
+from scipy.sparse import issparse
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
@@ -68,10 +69,23 @@ class TabularPreprocessor(BasePreprocessor):
                 # Конвертируем в string
                 X_copy[col] = X_copy[col].astype(str)
 
+        # StandardScaler cannot center sparse matrices; use with_mean=False when data is sparse
+        numeric_is_sparse = False
+        if numeric_cols:
+            X_num = X_copy[numeric_cols]
+            if issparse(X_num):
+                numeric_is_sparse = True
+            elif hasattr(X_num, 'values') and issparse(X_num.values):
+                numeric_is_sparse = True
+            elif isinstance(X_num.dtypes.iloc[0], pd.SparseDtype):
+                numeric_is_sparse = True
+
+        scaler = StandardScaler(with_mean=not numeric_is_sparse)
+
         # Создаем пайплайн для числовых колонок
         numeric_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', StandardScaler())
+            ('scaler', scaler)
         ])
 
         # Создаем пайплайн для категориальных колонок

@@ -1,8 +1,8 @@
 import torch
 
 # ===== ВЫБОР ДАТАСЕТА =====
-# Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine'
-CURRENT_DATASET = 'adult'
+# Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine', 'covertype', 'electric', 'mnist', 'imdb', 'cifar10'
+CURRENT_DATASET = 'imdb'
 
 # Глобальные флаги для отладки
 DEBUG_MODE = False
@@ -30,6 +30,7 @@ PYDVL_CONFIG = {
     'influence_params': {
         'regularization': 1e-06,
         'batch_size': 16,  # Для DataLoader в influence методах
+        'influence_val_batch_size': 500,  # Батч по валидации при influences_from_factors (чтобы не создавать матрицу n_val×n_train в GPU)
         'lissa_params': {'scale': 10, 'damping': 0.1},
         'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
         'arnoldi_params': {'rank': 10},
@@ -70,6 +71,49 @@ DATASET_INFLUENCE_PARAMS = {
         'cg_params': {'maxiter': 150, 'tolerance': 1e-3},
         'arnoldi_params': {'rank': 20},
         'nystroem_params': {'rank': 20}
+    },
+    'covertype': {
+        'regularization': 1e-05,
+        'batch_size': 32,
+        'influence_val_batch_size': 256,  # меньше из-за большого n_train/n_val и ограниченной GPU
+        'lissa_params': {'scale': 15, 'damping': 0.2},
+        'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
+        'arnoldi_params': {'rank': 15},
+        'nystroem_params': {'rank': 15}
+    },
+    'electric': {
+        'regularization': 1e-05,
+        'batch_size': 32,
+        'influence_val_batch_size': 256,
+        'lissa_params': {'scale': 15, 'damping': 0.2},
+        'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
+        'arnoldi_params': {'rank': 10},
+        'nystroem_params': {'rank': 10}
+    },
+    'mnist': {
+        'regularization': 1e-05,
+        'batch_size': 64,
+        'lissa_params': {'scale': 10, 'damping': 0.1},
+        'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
+        'arnoldi_params': {'rank': 20},
+        'nystroem_params': {'rank': 20}
+    },
+    'imdb': {
+        'regularization': 1e-05,
+        'batch_size': 32,
+        'lissa_params': {'scale': 15, 'damping': 0.2},
+        'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
+        'arnoldi_params': {'rank': 15},
+        'nystroem_params': {'rank': 15}
+    },
+    'cifar10': {
+        'regularization': 1e-05,
+        'batch_size': 32,
+        'influence_val_batch_size': 256,
+        'lissa_params': {'scale': 10, 'damping': 0.1},
+        'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
+        'arnoldi_params': {'rank': 15},
+        'nystroem_params': {'rank': 15}
     }
 }
 
@@ -85,13 +129,23 @@ from .datasets.adult_config import ADULT_CONFIG
 from .datasets.housing_config import HOUSING_CONFIG
 from .datasets.wine_config import WINE_CONFIG
 from .datasets.zillow_config import ZILLOW_CONFIG
+from .datasets.covertype_config import COVERTYPE_CONFIG
+from .datasets.electric_config import ELECTRIC_CONFIG
+from .datasets.mnist_config import MNIST_CONFIG
+from .datasets.imdb_config import IMDB_CONFIG
+from .datasets.cifar10_config import CIFAR10_CONFIG
 
 DATASET_MODEL_CONFIGS = {
     'adult': ADULT_CONFIG,
     'housing': HOUSING_CONFIG,
     'wine': WINE_CONFIG,
-    'zillow': ZILLOW_CONFIG
-    }
+    'zillow': ZILLOW_CONFIG,
+    'covertype': COVERTYPE_CONFIG,
+    'electric': ELECTRIC_CONFIG,
+    'mnist': MNIST_CONFIG,
+    'imdb': IMDB_CONFIG,
+    'cifar10': CIFAR10_CONFIG,
+}
 
 # Функция для получения конфигов модели для конкретного датасета
 def get_model_config(dataset_name, model_type):
@@ -106,7 +160,9 @@ def get_model_config(dataset_name, model_type):
         dict: Конфигурация модели для данного датасета
     """
     if dataset_name not in DATASET_MODEL_CONFIGS:
-        raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(DATASET_MODEL_CONFIGS.keys())}")
+        raise ValueError(
+            f"Unknown dataset: {dataset_name}. Available: {list(DATASET_MODEL_CONFIGS.keys())}"
+        )
 
     if model_type not in DATASET_MODEL_CONFIGS[dataset_name]:
         raise ValueError(f"Unknown model type: {model_type}. Available: {list(DATASET_MODEL_CONFIGS[dataset_name].keys())}")
@@ -129,7 +185,7 @@ EXPERIMENT_CONFIG = {
     'test_size': 0.2,
     'val_size': 0.1,
     'n_epochs': 500,
-    'sample_size_percentage': 100,
+    'sample_size_percentage': 10,
     'n_remove_list': list(range(1, 100, 2)),
     'n_random_runs': 1,
     'removal_strategies': ['remove_lowest_influence', 'remove_highest_influence']

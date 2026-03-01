@@ -302,7 +302,8 @@ class ExperimentLogger:
             f.write("SUMMARY STATISTICS:\n")
             f.write("-" * 40 + "\n")
             f.write(f"Number of influence methods evaluated: {len(influence_stats)}\n")
-            f.write(f"Number of scores per method: {len(list(scores.values())[0]) if scores else 0}\n")
+            first_scores = next(iter(scores.values()), [])
+            f.write(f"Number of scores per method: {len(first_scores) if hasattr(first_scores, '__len__') else 0}\n")
             f.write(f"Total experiment time: {wall_clock_time:.2f} seconds (~{wall_clock_time/60:.2f} minutes)\n")
             f.write(f"Experiment date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 

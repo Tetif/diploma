@@ -2,13 +2,34 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, accuracy_score
 from tqdm import tqdm
 
 from experiments.logger import debug_print
 from config.settings import EXPERIMENT_CONFIG, RANDOM_STATE
 from models.factory import ModelFactory
 from influence.methods import InfluenceMethods
+
+CLASSIFICATION_TASKS = ('binary_classification', 'multiclass_classification')
+
+
+def _pred_to_labels(y_pred, task_type):
+    """Convert predictions to class labels for classification metrics."""
+    if task_type not in CLASSIFICATION_TASKS:
+        return y_pred
+    y_pred = np.asarray(y_pred)
+    if np.issubdtype(y_pred.dtype, np.floating) and y_pred.min() >= 0 and y_pred.max() <= 1:
+        return (y_pred >= 0.5).astype(int)
+    return y_pred.astype(int)
+
+
+def _evaluation_metric(y_true, y_pred, task_type):
+    """Return metric value (lower is better): MAE for regression, 1 - accuracy for classification."""
+    if task_type in CLASSIFICATION_TASKS:
+        y_pred = _pred_to_labels(y_pred, task_type)
+        y_true = np.asarray(y_true).astype(int)
+        return 1.0 - accuracy_score(y_true, y_pred)
+    return mean_absolute_error(y_true, y_pred)
 
 
 class ExperimentRunner:
@@ -35,6 +56,7 @@ class ExperimentRunner:
 
         # Создание модели
         model = ModelFactory.create_model(**model_params)
+        task_type = model_params.get('task_type', 'regression')
 
         history = {'train': [], 'val': [], 'best_epoch': 0, 'best_val_mae': float('inf')}
 
@@ -49,7 +71,7 @@ class ExperimentRunner:
                 history['train'].append(train_loss)
 
                 y_pred_test = model.predict(X_test_transformed)
-                val_mae = mean_absolute_error(y_test, y_pred_test)
+                val_mae = _evaluation_metric(y_test.values, y_pred_test, task_type)
                 history['val'].append(val_mae)
                 
                 # Update learning rate scheduler based on validation loss
@@ -95,7 +117,7 @@ class ExperimentRunner:
             history['train'].append(train_loss)
 
             y_pred_test = model.predict(X_test_transformed)
-            test_mae = mean_absolute_error(y_test, y_pred_test)
+            test_mae = _evaluation_metric(y_test.values, y_pred_test, task_type)
             history['val'].append(test_mae)
             history['best_val_mae'] = test_mae
             history['best_epoch'] = 0
@@ -105,7 +127,7 @@ class ExperimentRunner:
         if hasattr(X_final_transformed, 'toarray'):
             X_final_transformed = X_final_transformed.toarray()
         y_pred_final = model.predict(X_final_transformed)
-        history['final_mae'] = mean_absolute_error(y_val, y_pred_final)
+        history['final_mae'] = _evaluation_metric(y_val.values if hasattr(y_val, 'values') else y_val, y_pred_final, task_type)
 
         if self.logger:
             self.logger.end_timing("model_training")
@@ -144,6 +166,11 @@ class ExperimentRunner:
         # Вычисление influence scores
         scores, scores_raw = influence_methods.compute_scores(methods, X_train, y_train,
                                                               preprocessor, X_test, y_test, pipeline)
+
+        # Для многоклассовой классификации нужно сохранять все классы в подвыборке (XGBoost/sklearn требуют полный набор)
+        n_classes_expected = None
+        if dataset_config and dataset_config.task_type in ['binary_classification', 'multiclass_classification']:
+            n_classes_expected = int(y_train.nunique())
 
         # Эксперименты с удалением данных
         for method, vals in tqdm(scores.items(), desc="Processing methods", unit="method"):
@@ -197,12 +224,14 @@ class ExperimentRunner:
                         self.logger.log_message(f"  Skipping - only {len(X_sub)} samples left (min 10 required)")
                     continue
 
-                # Check if target has only one class for classification tasks
-                if dataset_config and dataset_config.task_type in ['binary_classification', 'multiclass_classification']:
-                    unique_classes = y_sub.nunique()
-                    if unique_classes < 2:
+                # Для классификации в подвыборке должны быть все классы (иначе XGBoost/sklearn падают)
+                if n_classes_expected is not None:
+                    unique_in_sub = y_sub.nunique()
+                    if unique_in_sub < n_classes_expected:
                         if self.logger:
-                            self.logger.log_message(f"  Skipping - only {unique_classes} class(es) remaining (need at least 2 for classification)")
+                            self.logger.log_message(
+                                f"  Skipping pct={pct} - only {unique_in_sub} class(es) remaining (need all {n_classes_expected})"
+                            )
                         continue
 
                 key = f'{method}_{pct}pct'
@@ -236,11 +265,8 @@ class ExperimentRunner:
                 if len(X_sub) < 10:
                     continue
 
-                # Check if target has only one class for classification tasks
-                if dataset_config and dataset_config.task_type in ['binary_classification', 'multiclass_classification']:
-                    unique_classes = y_sub.nunique()
-                    if unique_classes < 2:
-                        continue
+                if n_classes_expected is not None and y_sub.nunique() < n_classes_expected:
+                    continue
 
                 # Сохраняем результаты каждого запуска
                 key = f'random_{pct}pct_run{run_idx}'

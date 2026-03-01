@@ -1,7 +1,8 @@
 import lightgbm as lgb
 import xgboost as xgb
 import catboost as cb
-from sklearn.ensemble import RandomForestRegressor
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from .base import BaseModel
 from config.settings import RANDOM_STATE
 
@@ -29,10 +30,13 @@ DEFAULT_MODEL_PARAMS = {
     }
 }
 
+CLASSIFICATION_TASKS = ('binary_classification', 'multiclass_classification')
+
 class LightGBMModel(BaseModel):
-    def __init__(self, params=None, **kwargs):
+    def __init__(self, params=None, task_type='regression', **kwargs):
         super().__init__()
         self.model = None
+        self.task_type = task_type
         # Use provided params, fall back to defaults
         if params is None:
             self.params = DEFAULT_MODEL_PARAMS['lightgbm'].copy()
@@ -42,7 +46,7 @@ class LightGBMModel(BaseModel):
         lightgbm_keys = {
             'objective', 'metric', 'num_leaves', 'learning_rate', 'feature_fraction',
             'bagging_fraction', 'bagging_freq', 'min_data_in_leaf', 'verbose', 'n_jobs',
-            'random_state', 'max_depth', 'subsample', 'colsample_bytree'
+            'random_state', 'max_depth', 'subsample', 'colsample_bytree', 'num_class'
         }
         for key in lightgbm_keys:
             if key in kwargs:
@@ -82,24 +86,29 @@ class LightGBMModel(BaseModel):
 
 
 class XGBoostModel(BaseModel):
-    def __init__(self, params=None, **kwargs):
+    def __init__(self, params=None, task_type='regression', **kwargs):
         super().__init__()
         self.model = None
+        self.task_type = task_type
         if params is None:
             self.params = DEFAULT_MODEL_PARAMS['xgboost'].copy()
         else:
             self.params = params.copy() if isinstance(params, dict) else DEFAULT_MODEL_PARAMS['xgboost'].copy()
-        # Only update with valid XGBoost parameters
+        # Only update with valid XGBoost parameters (num_class needed for multiclass, clone-safe)
         xgboost_keys = {
             'objective', 'eval_metric', 'max_depth', 'learning_rate', 'subsample',
-            'colsample_bytree', 'min_child_weight', 'gamma', 'random_state', 'n_jobs'
+            'colsample_bytree', 'min_child_weight', 'gamma', 'random_state', 'n_jobs',
+            'num_class'
         }
         for key in xgboost_keys:
             if key in kwargs:
                 self.params[key] = kwargs[key]
 
     def fit(self, X, y, **kwargs):
-        self.model = xgb.XGBRegressor(**self.params)
+        if self.task_type in CLASSIFICATION_TASKS:
+            self.model = xgb.XGBClassifier(**self.params)
+        else:
+            self.model = xgb.XGBRegressor(**self.params)
         self.model.fit(X, y)
         return 0.0
 
@@ -116,9 +125,10 @@ class XGBoostModel(BaseModel):
 
 
 class RandomForestModel(BaseModel):
-    def __init__(self, params=None, **kwargs):
+    def __init__(self, params=None, task_type='regression', **kwargs):
         super().__init__()
         self.model = None
+        self.task_type = task_type
         if params is None:
             self.params = DEFAULT_MODEL_PARAMS['random_forest'].copy()
         else:
@@ -133,12 +143,15 @@ class RandomForestModel(BaseModel):
                 self.params[key] = kwargs[key]
 
     def fit(self, X, y, **kwargs):
-        self.model = RandomForestRegressor(**self.params)
+        if self.task_type in CLASSIFICATION_TASKS:
+            self.model = RandomForestClassifier(**self.params)
+        else:
+            self.model = RandomForestRegressor(**self.params)
         self.model.fit(X, y)
         return 0.0
 
     def predict(self, X):
-        return self.model.predict(X)
+        return np.asarray(self.model.predict(X))
 
     def get_params(self, deep=True):
         """Возвращает параметры модели (совместимость с sklearn)"""
@@ -150,9 +163,10 @@ class RandomForestModel(BaseModel):
 
 
 class CatBoostModel(BaseModel):
-    def __init__(self, params=None, **kwargs):
+    def __init__(self, params=None, task_type='regression', **kwargs):
         super().__init__()
         self.model = None
+        self.task_type = task_type
         if params is None:
             self.params = DEFAULT_MODEL_PARAMS['catboost'].copy()
         else:
@@ -167,12 +181,15 @@ class CatBoostModel(BaseModel):
                 self.params[key] = kwargs[key]
 
     def fit(self, X, y, **kwargs):
-        self.model = cb.CatBoostRegressor(**self.params)
+        if self.task_type in CLASSIFICATION_TASKS:
+            self.model = cb.CatBoostClassifier(**self.params)
+        else:
+            self.model = cb.CatBoostRegressor(**self.params)
         self.model.fit(X, y, verbose=False)
         return 0.0
 
     def predict(self, X):
-        return self.model.predict(X)
+        return np.asarray(self.model.predict(X))
 
     def get_params(self, deep=True):
         """Возвращает параметры модели (совместимость с sklearn)"""

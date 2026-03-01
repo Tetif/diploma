@@ -6,6 +6,11 @@ from .adult import AdultConfig
 from .housing import HousingConfig
 from .wine import WineConfig
 from .zillow import ZillowConfig
+from .covertype import CovertypeConfig
+from .electric import ElectricConfig
+from .mnist import MnistConfig
+from .imdb import ImdbConfig
+from .cifar10 import Cifar10Config
 
 
 class DatasetRegistry:
@@ -73,6 +78,11 @@ DatasetRegistry.register('adult', AdultConfig)
 DatasetRegistry.register('housing', HousingConfig)
 DatasetRegistry.register('wine', WineConfig)
 DatasetRegistry.register('zillow', ZillowConfig)
+DatasetRegistry.register('covertype', CovertypeConfig)
+DatasetRegistry.register('electric', ElectricConfig)
+DatasetRegistry.register('mnist', MnistConfig)
+DatasetRegistry.register('imdb', ImdbConfig)
+DatasetRegistry.register('cifar10', Cifar10Config)
 
 
 # Экспортируем для удобства
@@ -83,5 +93,10 @@ __all__ = [
     'AdultConfig',
     'HousingConfig',
     'WineConfig',
-    'ZillowConfig'
+    'ZillowConfig',
+    'CovertypeConfig',
+    'ElectricConfig',
+    'MnistConfig',
+    'ImdbConfig',
+    'Cifar10Config',
 ]
