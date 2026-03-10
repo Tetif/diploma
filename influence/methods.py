@@ -23,7 +23,14 @@ from pydvl.influence.torch import (
 from pydvl.influence import InfluenceMode
 
 from experiments.logger import debug_print
-from config.settings import PYDVL_CONFIG, N_JOBS, RANDOM_STATE, get_influence_params
+from config.settings import (
+    PYDVL_CONFIG,
+    N_JOBS,
+    RANDOM_STATE,
+    get_influence_params,
+    INFLUENCE_METHODS_CONFIG,
+    get_selected_metric,
+)
 from .scorers import ScorerFactory
 
 
@@ -187,16 +194,23 @@ class InfluenceMethods:
             val_dataset = Dataset(X_train_t, y_train_1d.reshape(-1, 1), X_val_t, y_val_1d.reshape(-1, 1))
 
         # Создание скорера
-        # Выбираем scorer в зависимости от типа задачи
+        # По возможности используем ту же метрику, что выбрана в settings.py.
         if self.dataset_config and hasattr(self.dataset_config, 'task_type'):
-            if self.dataset_config.task_type == 'regression':
-                scorer_name = 'mae'  # или другой регрессионный метрик
+            selected_metric = get_selected_metric(
+                self.dataset_config.task_type,
+                getattr(self.dataset_config, 'metrics', None),
+            )
+            supported_scorers = {'mae', 'accuracy', 'f1', 'f1_weighted', 'f1_macro'}
+            if selected_metric in supported_scorers:
+                scorer_name = selected_metric
+            elif self.dataset_config.task_type == 'regression':
+                scorer_name = 'mae'
             elif self.dataset_config.task_type == 'binary_classification':
-                scorer_name = 'f1'  # или другой метрик классификации
+                scorer_name = 'f1'
             elif self.dataset_config.task_type == 'multiclass_classification':
                 scorer_name = 'f1_weighted'
             else:
-                scorer_name = 'mae'  # default
+                scorer_name = 'mae'
         else:
             # Default для обратной совместимости
             scorer_name = 'mae'
@@ -250,49 +264,22 @@ class InfluenceMethods:
             self.logger.log_message(f"[DEBUG] Model type in utility: {type(model_wrapper)}")
             self.logger.log_message(f"[DEBUG] Scorer in utility: {type(supervised_scorer)}")
 
-        # Определение методов для использования
+        # Определение методов для использования (из config.settings.INFLUENCE_METHODS_CONFIG)
         if methods_to_use is None:
-
-            methods_to_use = [
-                # 'LOO'
-                # , 'DataShapley'
-                # , 'BetaShapley'
-                # , 'Banzhaf'
-                # , 'TMCShapley'
-                # , 'KNNShapley'  # Только для классификации
-                # , 'DataOOB'     # Требует специальной настройки
-                # , 'LeastCore'
-                              ]
-
-
-            # Проверяем, является ли модель PyTorch моделью или дистиллированной
+            methods_to_use = list(INFLUENCE_METHODS_CONFIG.get('valuation_methods', []))
 
             is_pytorch = False
-
             if hasattr(model_wrapper, 'model'):
                 inner_model = getattr(model_wrapper, 'model', None)
                 if isinstance(inner_model, torch.nn.Module):
                     is_pytorch = True
                 elif hasattr(inner_model, 'model') and isinstance(getattr(inner_model, 'model', None), torch.nn.Module):
-                    # PyTorchModelWrapper case
                     is_pytorch = True
-
             if hasattr(model_wrapper, 'student_model') and isinstance(getattr(model_wrapper, 'student_model', None), torch.nn.Module):
                 is_pytorch = True
 
             if is_pytorch:
-                methods_to_use.extend([
-                    # 'Influence',
-                    'ArnoldiInfluence',
-                    # 'CgInfluence',
-                    # 'LissaInfluence',
-                    'NystroemSketchInfluence'
-                ])
-
-            # Добавляем Shapley методы только если не дистилляция (слишком медленно)
-            is_distilled = hasattr(model_wrapper, 'student_model')
-            # if not is_distilled:
-            #     methods_to_use.extend(['DataShapley', 'BetaShapley'])
+                methods_to_use = methods_to_use + list(INFLUENCE_METHODS_CONFIG.get('influence_methods', []))
 
         # Инициализация методов - каждый метод в отдельном try-except блоке
         with parallel_config(backend="threading", n_jobs=N_JOBS):
@@ -719,12 +706,14 @@ class InfluenceMethods:
                             y_train_tensor,
                             mode=InfluenceMode.Up
                         ).cpu().numpy()
+                        # Signed sum: positive = helpful (removal increases loss), negative = harmful (removal decreases loss).
+                        # So remove_highest_influence removes helpful points, remove_lowest_influence removes harmful ones.
                         if scores_batch.ndim == 2:
-                            per_train += np.abs(scores_batch).sum(axis=0)
+                            per_train += scores_batch.sum(axis=0)
                         elif scores_batch.ndim > 2:
-                            per_train += np.abs(scores_batch).sum(axis=tuple(range(scores_batch.ndim - 1)))
+                            per_train += scores_batch.sum(axis=tuple(range(scores_batch.ndim - 1)))
                         else:
-                            per_train += np.abs(scores_batch).flatten()
+                            per_train += scores_batch.flatten()
                         del scores_batch
                         if torch.cuda.is_available():
                             torch.cuda.empty_cache()

@@ -84,6 +84,30 @@ class ExperimentLogger:
 
         self.log_message(f"Results saved: {self.results_file}")
 
+    def save_influence_weights_to_experiment_dir(
+        self,
+        scores_raw,
+        dataset_name: str,
+        n_train: int,
+        n_remove_list: list,
+    ):
+        """
+        Save influence weights to experiment dir as influence_weights.pkl
+        for later reuse (e.g. plot_removal_from_weights.py).
+        """
+        from influence.io import save_influence_weights
+        from datetime import datetime
+        metadata = {
+            'dataset_name': dataset_name,
+            'n_train': n_train,
+            'n_remove_list': n_remove_list,
+            'methods': list(scores_raw.keys()),
+            'timestamp': datetime.now().isoformat(),
+        }
+        path = self.experiment_dir / "influence_weights.pkl"
+        save_influence_weights(scores_raw, metadata, path)
+        self.log_message(f"Influence weights saved: {path}")
+
     def save_config(self, config):
         """
         Сохраняет конфигурацию эксперимента в JSON без дублирования.
@@ -144,14 +168,23 @@ class ExperimentLogger:
         # Обработка training_params - убираем дублирование
         training_params = config.get('training_params', {})
         
-        # Определяем removal strategy - берем из одного источника
-        removal_strategy = training_params.get('removal_strategy') or \
+        # Берем фактически используемую стратегию из model_params, затем fallback к training_params.
+        removal_strategy = model_params.get('removal_strategy') or \
+                         training_params.get('removal_strategy') or \
                          training_params.get('removal_strategies', [None])[0] or \
                          'remove_lowest_influence'
         
-        # Определяем n_remove_list - берем один список, не оба
-        n_remove_list = training_params.get('n_remove_list') or \
-                       training_params.get('n_remove_percentages') or []
+        # Определяем n_remove_list - берем один список, не оба.
+        # Приоритет: явные проценты из experiment_params, затем legacy-поля.
+        n_remove_list = (
+            training_params.get('n_remove_percentages')
+            or config.get('experiment_params', {}).get('n_remove_percentages')
+            or training_params.get('n_remove_list')
+            or config.get('experiment_params', {}).get('n_remove_list')
+            or []
+        )
+        loss_removal_methods = training_params.get('loss_removal_methods') or \
+                              config.get('experiment_params', {}).get('loss_removal_methods') or []
         
         normalized['training'] = {
             'test_size': training_params.get('test_size'),
@@ -161,6 +194,7 @@ class ExperimentLogger:
             'sample_size_percentage': training_params.get('sample_size_percentage'),
             'removal': {
                 'strategy': removal_strategy,
+                'loss_methods': loss_removal_methods,
                 'sample_counts': n_remove_list,
                 'count': len(n_remove_list) if n_remove_list else 0,
             } if n_remove_list else None

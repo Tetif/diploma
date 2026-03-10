@@ -34,38 +34,54 @@ class ModelFactory:
         model_specific_params = ModelFactory._extract_model_params(model_params, model_type)
         tree_kwargs = {'task_type': task_type}
 
+        num_classes = model_params.get('num_class', 1)
+
         if model_type == 'lightgbm':
             if use_distillation:
                 base_model = LightGBMModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
-                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
+                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs, num_classes=num_classes)
             return LightGBMModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'xgboost':
             if use_distillation:
                 base_model = XGBoostModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
-                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
+                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs, num_classes=num_classes)
             return XGBoostModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'random_forest':
             if use_distillation:
                 base_model = RandomForestModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
-                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
+                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs, num_classes=num_classes)
             return RandomForestModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'catboost':
             if use_distillation:
                 base_model = CatBoostModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
-                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs)
+                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs, num_classes=num_classes)
             return CatBoostModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'pytorch':
             if input_size is None:
                 raise ValueError("Для PyTorch модели требуется input_size")
-            return PyTorchModelWrapper(input_size, device=device, model_architecture=model_architecture, task_type=task_type)
+            # Архитектурные параметры (layers, dropout, learning_rate и т.д.) лежат в model_params[model_architecture]
+            arch_config = model_params.get(model_architecture)
+            if isinstance(arch_config, dict):
+                torch_kwargs = dict(arch_config)
+            else:
+                torch_kwargs = {}
+            if task_type == 'binary_classification' and model_params.get('pos_weight') is not None:
+                torch_kwargs['pos_weight'] = model_params['pos_weight']
+            return PyTorchModelWrapper(
+                input_size,
+                device=device,
+                model_architecture=model_architecture,
+                task_type=task_type,
+                **torch_kwargs
+            )
         else:
             raise ValueError(f"Неизвестный тип модели: {model_type}")
 
@@ -77,7 +93,7 @@ class ModelFactory:
             'model_type', 'input_size', 'device', 'model_architecture',
             'use_distillation', 'distillation_epochs', 'task_type',
             'removal_strategy', 'sample_size_percentage', 'temperature',
-            'student_architecture'  # Added student_architecture
+            'student_architecture', 'available_metrics'
         }
         
         # For tree-based models, also exclude PyTorch-specific params

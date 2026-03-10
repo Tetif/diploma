@@ -1,3 +1,4 @@
+import importlib
 import numpy as np
 import pandas as pd
 import pydvl
@@ -12,7 +13,9 @@ from sklearn.model_selection import train_test_split
 from config.settings import (
     DEBUG_MODE, EXPERIMENTS_BASE_DIR, DEVICE,
     EXPERIMENT_CONFIG, DISTILLATION_CONFIG, RANDOM_STATE,
-    CURRENT_DATASET, get_model_config
+    CURRENT_DATASET, get_model_config, get_selected_metric, get_metric_metadata,
+    MODEL_RUN_CONFIG, get_n_remove_list, get_selected_loss_removal_methods,
+    REMOVAL_STRATEGIES,
 )
 from config import DatasetRegistry
 from experiments.logger import ExperimentLogger
@@ -23,7 +26,8 @@ from experiments.runner import ExperimentRunner
 from visualization.plots import (
     plot_influence_distribution,
     plot_results_enhanced,
-    plot_combined_comparison
+    plot_combined_comparison,
+    save_removal_metrics_csv,
 )
 from utils.helpers import (
     set_random_seeds, sample_data, split_data,
@@ -40,7 +44,7 @@ def main(dataset_name=None):
         dataset_name: Имя датасета ('zillow', 'adult', 'housing', 'wine', 'covertype', 'electric', 'mnist', 'imdb', 'cifar10').
                      Если None, используется CURRENT_DATASET из settings
     """
-    # Выбираем датасет
+    # Выбираем датасет: без --dataset строго из config/settings.py
     if dataset_name is None:
         dataset_name = CURRENT_DATASET
 
@@ -81,12 +85,12 @@ def main(dataset_name=None):
             'metrics': dataset_config.metrics
         },
         'model_params': {
-            'model_type': 'pytorch',  # Можно менять: lightgbm, xgboost, random_forest, pytorch, catboost
-            'model_architecture': 'simple',  # Для pytorch: simple      , improved или ft_transformer
+            'model_type': MODEL_RUN_CONFIG['model_type'],
+            'model_architecture': MODEL_RUN_CONFIG['model_architecture'],
             'input_size': 'auto',
             'device': DEVICE,
-            'removal_strategy': 'remove_lowest_influence', #lowest
-            # Параметры дистилляции
+            # Набор стратегий удаления для influence-методов (одна или несколько)
+            'removal_strategies': MODEL_RUN_CONFIG.get('removal_strategies', REMOVAL_STRATEGIES),
             'use_distillation': DISTILLATION_CONFIG['use_distillation'],
             'distillation_epochs': DISTILLATION_CONFIG['distillation_epochs'],
             'temperature': DISTILLATION_CONFIG['temperature'],
@@ -191,26 +195,39 @@ def main(dataset_name=None):
     model_params = config['model_params'].copy()
     model_params['input_size'] = actual_input_size
     model_params['task_type'] = cfg.task_type
+    model_params['available_metrics'] = list(getattr(cfg, 'metrics', []))
 
     # Добавляем оптимальные параметры в model_params (но не перезаписываем уже установленные)
     for key, value in dataset_model_config.items():
         if key not in model_params or key in ['learning_rate', 'num_leaves', 'max_depth', 'iterations', 'n_estimators', 'layers', 'dropout']:
             model_params[key] = value
 
+    # Для бинарной классификации (PyTorch): pos_weight для BCEWithLogitsLoss уменьшает эффект дисбаланса классов
+    if cfg.task_type == 'binary_classification' and model_params.get('model_type') == 'pytorch':
+        y_flat = np.asarray(y_train).ravel()
+        n_pos = max(int((y_flat == 1).sum()), 1)
+        n_neg = int((y_flat == 0).sum())
+        model_params['pos_weight'] = n_neg / n_pos
+
+    # n_epochs: из EXPERIMENT_CONFIG для PyTorch/дистилляции; для tree-моделей всегда 1 (игнорируется)
     if model_params['model_type'] == 'pytorch' or model_params.get('use_distillation', False):
-        n_epochs = 500
+        n_epochs = EXPERIMENT_CONFIG.get('n_epochs', 500)
     else:
         n_epochs = 1
 
     config['model_params'] = model_params
     config['training_params']['n_epochs'] = n_epochs
+    selected_metric = get_selected_metric(cfg.task_type, getattr(cfg, 'metrics', []))
+    config['evaluation_metric'] = {
+        'name': selected_metric,
+        **get_metric_metadata(selected_metric),
+    }
 
-
-    n_remove_list = np.linspace(1, 99, 33, dtype=int).tolist()
-
+    n_remove_list = get_n_remove_list()
     config['experiment_params'] = {
         'n_remove_percentages': n_remove_list,
-        'removal_strategy': model_params['removal_strategy']
+        'removal_strategies': model_params.get('removal_strategies', REMOVAL_STRATEGIES),
+        'loss_removal_methods': get_selected_loss_removal_methods(),
     }
     logger.save_config(config)
     logger.log_message("Starting experiments")
@@ -235,6 +252,11 @@ def main(dataset_name=None):
     logger.log_message("Plotting results...")
     logger.save_results(results, scores, scores_raw, n_remove_list, random_run_results=random_run_results)
 
+    # CSV с данными для графика removal в папку эксперимента
+    removal_csv_path = logger.experiment_dir / "removal_metrics.csv"
+    save_removal_metrics_csv(results, n_remove_list, removal_csv_path)
+    logger.log_message(f"Removal metrics CSV saved: {removal_csv_path}")
+
     plot_influence_distribution(scores_raw, "influence_scores", logger)
     plt.show()
 
@@ -246,8 +268,10 @@ def main(dataset_name=None):
 
     # Генерация отчета
     model_metrics = {
-        'baseline_mae': results['orig']['final_mae'],
-        'best_validation_mae': results['orig']['best_val_mae'],
+        'baseline_metric': results['orig']['final_metric'],
+        'best_validation_metric': results['orig']['best_val_metric'],
+        'metric_name': results['orig'].get('metric_name'),
+        'metric_label_ru': results['orig'].get('metric_label_ru'),
         'best_epoch': results['orig']['best_epoch'],
         'total_training_epochs': n_epochs,
         'model_type': model_params['model_type'],
@@ -264,9 +288,10 @@ def main(dataset_name=None):
 
 
 if __name__ == '__main__':
+    # По умолчанию — значение из config/settings.py (без перезагрузки здесь, т.к. парсер создаётся до main)
     parser = argparse.ArgumentParser(description='Run experiments with different datasets')
     parser.add_argument('--dataset', type=str, default=None,
-                       help=f'Dataset name: {', '.join(DatasetRegistry.list())}. Default: {CURRENT_DATASET}')
+                        help=f"Dataset name. If not set, uses CURRENT_DATASET from config/settings.py (now: {CURRENT_DATASET})")
     args = parser.parse_args()
-    
+    # Явно: без --dataset используем только settings (в main при None подставится CURRENT_DATASET)
     main(args.dataset)

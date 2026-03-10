@@ -1,7 +1,94 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+from pathlib import Path
 from tqdm import tqdm
 from experiments.logger import debug_print
+
+
+def get_methods_from_results(results):
+    """Извлекает список имён методов из ключей results (для графика и CSV)."""
+    all_keys = set(results.keys())
+    methods = []
+    for key in all_keys:
+        if key == 'orig':
+            continue
+        if key == 'random' or key.startswith('random_'):
+            if 'random' not in methods:
+                methods.append('random')
+            continue
+        if '_' in key and key.endswith('pct'):
+            suffix = key.rsplit('_', 1)[-1]
+            if suffix[:-3].isdigit() and suffix.endswith('pct'):
+                method_name = key.rsplit('_', 1)[0]
+                if method_name not in methods:
+                    methods.append(method_name)
+    method_order = ['LOO', 'Banzhaf', 'TMCShapley', 'DataShapley', 'BetaShapley', 'Influence', 'ArnoldiInfluence', 'CgInfluence', 'LissaInfluence', 'NystroemSketchInfluence', 'LossHigh', 'LossLow', 'random']
+    def _sort_key(m):
+        if m in method_order:
+            return (0, method_order.index(m))
+        if m.endswith('_lowest'):
+            return (1, method_order.index(m[:-7]) if m[:-7] in method_order else 999)
+        if m.endswith('_highest'):
+            return (2, method_order.index(m[:-8]) if m[:-8] in method_order else 999)
+        if m.endswith('_extremes'):
+            return (3, method_order.index(m[:-9]) if m[:-9] in method_order else 999)
+        if m.endswith('_median'):
+            return (4, method_order.index(m[:-7]) if m[:-7] in method_order else 999)
+        return (5, 0)
+    return sorted(methods, key=_sort_key)
+
+
+def _get_metric_context(data):
+    """Достать метаданные выбранной метрики из history/results."""
+    metric_source = data.get('orig', data) if isinstance(data, dict) else {}
+    metric_name = metric_source.get('metric_name', 'mae')
+    metric_short_label = metric_source.get('metric_short_label_ru', 'MAE')
+    metric_label_ru = metric_source.get('metric_label_ru', 'Средняя абсолютная ошибка')
+    final_metric_key = 'final_metric' if 'final_metric' in metric_source else 'final_mae'
+    best_metric_key = 'best_val_metric' if 'best_val_metric' in metric_source else 'best_val_mae'
+    return {
+        'name': metric_name,
+        'short_label_ru': metric_short_label,
+        'label_ru': metric_label_ru,
+        'final_key': final_metric_key,
+        'best_key': best_metric_key,
+    }
+
+
+def _extract_metric_value(metrics_dict, metric_key):
+    """Безопасно достать значение метрики из словаря history/results."""
+    if not isinstance(metrics_dict, dict):
+        return np.nan
+    if metric_key in metrics_dict:
+        return metrics_dict.get(metric_key, np.nan)
+    if metric_key == 'final_metric':
+        return metrics_dict.get('final_mae', np.nan)
+    if metric_key == 'best_val_metric':
+        return metrics_dict.get('best_val_mae', np.nan)
+    return np.nan
+
+
+def save_removal_metrics_csv(results, n_remove_list, csv_path):
+    """Сохраняет данные графика removal в CSV: pct_removed, baseline, method1, method2, ..."""
+    csv_path = Path(csv_path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    methods = get_methods_from_results(results)
+    metric_ctx = _get_metric_context(results)
+    baseline_metric = _extract_metric_value(results.get('orig', {}), metric_ctx['final_key'])
+    rows = []
+    for pct in [0] + n_remove_list:
+        row = {'pct_removed': pct}
+        row['baseline'] = baseline_metric
+        for method in methods:
+            if pct == 0:
+                val = baseline_metric
+            else:
+                key = f'{method}_{pct}pct'
+                val = _extract_metric_value(results.get(key, {}), metric_ctx['final_key'])
+            row[method] = val
+        rows.append(row)
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
 
 
 def plot_influence_distribution(scores, plot_name_suffix="", logger=None):
@@ -66,6 +153,9 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
         debug_print("Creating enhanced visualization...")
 
     plt.figure(figsize=(14, 8))
+    metric_ctx = _get_metric_context(results)
+    metric_short_label = metric_ctx['short_label_ru']
+    metric_label_ru = metric_ctx['label_ru']
 
     # Расширенные базовые цвета (приглушенные)
     base_colors = {
@@ -80,6 +170,8 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
         'CgInfluence': '#9467bd99',
         'LissaInfluence': '#8c564b99',
         'NystroemSketchInfluence': '#e377c299',
+        'LossHigh': '#e74c3c99',
+        'LossLow': '#1abc9c99',
         'random': '#f39c1299'
     }
 
@@ -96,33 +188,72 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
         'CgInfluence': '#9467bd',
         'LissaInfluence': '#8c564b',
         'NystroemSketchInfluence': '#e377c2',
+        'LossHigh': '#e74c3c',
+        'LossLow': '#1abc9c',
         'random': '#f39c12'
     }
 
     x_points = [0] + n_remove_list
 
     if 'orig' in results:
-        baseline_mae = results['orig']['final_mae']
-        plt.plot([0], [baseline_mae], 'o-', color=base_colors['Baseline'],
+        baseline_metric = _extract_metric_value(results['orig'], metric_ctx['final_key'])
+        plt.plot([0], [baseline_metric], 'o-', color=base_colors['Baseline'],
                  alpha=0.3, linewidth=1, markersize=6)
 
-    # Автоматически определяем все доступные методы из результатов
-    all_keys = set(results.keys())
-    methods = []
+    methods = get_methods_from_results(results)
 
-    # Извлекаем названия методов из ключей результатов
-    for key in all_keys:
-        if key.startswith(('LOO_', 'DataShapley_', 'BetaShapley_', 'Influence_', 'Banzhaf_', 'TMCShapley_', 'ArnoldiInfluence_', 'CgInfluence_', 'LissaInfluence_', 'NystroemSketchInfluence_')):
-            method_name = key.split('_')[0]
-            if method_name not in methods:
-                methods.append(method_name)
-        elif key == 'random' or key.startswith('random_'):
-            if 'random' not in methods:
-                methods.append('random')
+    def _color_for_method(method, color_map, default='#999999'):
+        """Resolve color for method; суффиксы используют цвет базового метода."""
+        if method in color_map:
+            return color_map[method]
+        suffixes = (
+            '_lowest',
+            '_highest',
+            '_extremes',
+            '_median',
+            '_few_bad_rand',
+            '_few_median_rand',
+            '_few_good_rand',
+        )
+        for suffix in suffixes:
+            if method.endswith(suffix):
+                base = method[:-len(suffix)]
+                return color_map.get(base, default)
+        return default
 
-    # Сортируем методы для консистентности
-    method_order = ['LOO', 'Banzhaf', 'TMCShapley', 'DataShapley', 'BetaShapley', 'Influence', 'ArnoldiInfluence', 'CgInfluence', 'LissaInfluence', 'NystroemSketchInfluence', 'random']
-    methods = sorted(methods, key=lambda x: method_order.index(x) if x in method_order else len(method_order))
+    def _linestyle_for_method(method):
+        """
+        lowest  — сплошная,
+        highest — пунктир,
+        extremes — штрих-пунктир,
+        median — точками,
+        few_*_rand — комбинированные стили (отличаются от базовых).
+        """
+        if method.endswith('_lowest'):
+            return '-'
+        if method.endswith('_highest'):
+            return '--'
+        if method.endswith('_extremes'):
+            return '-.'
+        if method.endswith('_median'):
+            return ':'
+        if method.endswith('_few_bad_rand'):
+            return '--'
+        if method.endswith('_few_median_rand'):
+            return '-.'
+        if method.endswith('_few_good_rand'):
+            return ':'
+        return '-'
+
+    def _marker_for_method(method):
+        """Маркер для стратегий, чтобы few_* были визуально отличимы."""
+        if method.endswith('_few_bad_rand'):
+            return 's'   # квадрат
+        if method.endswith('_few_median_rand'):
+            return 'D'   # ромб
+        if method.endswith('_few_good_rand'):
+            return '^'   # треугольник
+        return 'o'
 
     if logger:
         logger.log_message(f"Detected methods for plotting: {methods}")
@@ -134,61 +265,81 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
         if method == 'random' and random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
             continue
             
-        mae_values = []
+        metric_values = []
 
         if 'orig' in results:
-            mae_values.append(results['orig']['final_mae'])
+            metric_values.append(_extract_metric_value(results['orig'], metric_ctx['final_key']))
 
         for pct in n_remove_list:
             key = f'{method}_{pct}pct'
             if key in results:
-                mae_values.append(results[key]['final_mae'])
+                metric_values.append(_extract_metric_value(results[key], metric_ctx['final_key']))
             else:
-                mae_values.append(float('nan'))
+                metric_values.append(float('nan'))
 
-        if len(mae_values) > 0:
-            valid_indices = [i for i, val in enumerate(mae_values) if not np.isnan(val)]
+        if len(metric_values) > 0:
+            valid_indices = [i for i, val in enumerate(metric_values) if not np.isnan(val)]
             if len(valid_indices) > 0:
                 x_valid = [x_points[i] for i in valid_indices]
-                y_valid = [mae_values[i] for i in valid_indices]
-                plt.plot(x_valid, y_valid, 'o-',
-                         color=base_colors.get(method, '#99999999'), alpha=0.3, linewidth=1,
-                         markersize=4, label=f'{method} (raw)')
+                y_valid = [metric_values[i] for i in valid_indices]
+                ls = _linestyle_for_method(method)
+                marker = _marker_for_method(method)
+                # Все "сырые" линии делаем одинаковой прозрачности
+                alpha_raw = 0.25
+                plt.plot(
+                    x_valid,
+                    y_valid,
+                    marker + ls,
+                    color=_color_for_method(method, base_colors, '#99999999'),
+                    alpha=alpha_raw,
+                    linewidth=1,
+                    markersize=4,
+                    label=f'{method} (raw)',
+                )
 
     for method in tqdm(methods, desc="Plotting smoothed trends", unit="method", leave=False):
         # Пропускаем random если выводятся несколько запусков random
         if method == 'random' and random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
             continue
             
-        mae_values = []
+        metric_values = []
 
         if 'orig' in results:
-            mae_values.append(results['orig']['final_mae'])
+            metric_values.append(_extract_metric_value(results['orig'], metric_ctx['final_key']))
 
         for pct in n_remove_list:
             key = f'{method}_{pct}pct'
             if key in results:
-                mae_values.append(results[key]['final_mae'])
+                metric_values.append(_extract_metric_value(results[key], metric_ctx['final_key']))
             else:
-                mae_values.append(float('nan'))
+                metric_values.append(float('nan'))
 
-        clean_mae = [val for val in mae_values if not np.isnan(val)]
-        clean_indices = [i for i, val in enumerate(mae_values) if not np.isnan(val)]
+        clean_values = [val for val in metric_values if not np.isnan(val)]
+        clean_indices = [i for i, val in enumerate(metric_values) if not np.isnan(val)]
 
-        if len(clean_mae) > 1:
-            window_size = min(3, len(clean_mae))
+        if len(clean_values) > 1:
+            window_size = min(3, len(clean_values))
             if window_size > 1:
-                smoothed = np.convolve(clean_mae, np.ones(window_size) / window_size, mode='same')
+                smoothed = np.convolve(clean_values, np.ones(window_size) / window_size, mode='same')
                 # Заменяем крайние точки на оригинальные значения для точности
-                smoothed[0] = clean_mae[0]
-                smoothed[-1] = clean_mae[-1]
+                smoothed[0] = clean_values[0]
+                smoothed[-1] = clean_values[-1]
             else:
-                smoothed = clean_mae
+                smoothed = clean_values
 
             x_smooth = [x_points[i] for i in clean_indices[:len(smoothed)]]
-            plt.plot(x_smooth, smoothed, '-',
-                     color=trend_colors.get(method, '#999999'), alpha=0.9, linewidth=3,
-                     label=f'{method} (trend)')
+            ls = _linestyle_for_method(method)
+            # Все трендовые линии одинаковой яркости, различаются только стилем
+            alpha_trend = 0.8
+            plt.plot(
+                x_smooth,
+                smoothed,
+                ls,
+                color=_color_for_method(method, trend_colors, '#999999'),
+                alpha=alpha_trend,
+                linewidth=3,
+                label=f'{method} (trend)',
+            )
 
     # Добавляем результаты от нескольких случайных запусков
     if random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
@@ -213,10 +364,10 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
             else:
                 # Для других процентов берем данные из словаря
                 if pct_value in random_run_results and len(random_run_results[pct_value]) > 0:
-                    mae_at_point = random_run_results[pct_value]
-                    worst_values.append(max(mae_at_point))
-                    best_values.append(min(mae_at_point))
-                    mean_values.append(np.mean(mae_at_point))
+                    metric_at_point = random_run_results[pct_value]
+                    worst_values.append(max(metric_at_point))
+                    best_values.append(min(metric_at_point))
+                    mean_values.append(np.mean(metric_at_point))
                 else:
                     worst_values.append(np.nan)
                     best_values.append(np.nan)
@@ -232,20 +383,24 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
             
             # Показываем доверительный интервал (худший-лучший диапазон) - полупрозрачная полоса
             plt.fill_between(x_valid, best_valid, worst_valid, 
-                            color='#f39c12', alpha=0.15, label='Random Runs Range')
+                            color='#f39c12', alpha=0.15, label='Диапазон случайных запусков')
             
             # Линия среднего значения - яркая (без маркеров)
             plt.plot(x_valid, mean_valid, '-', color='#f39c12', alpha=0.9,
-                    linewidth=2.5, label='Random Mean')
+                    linewidth=2.5, label='Среднее по случайным запускам')
 
     if 'orig' in results:
-        baseline_mae = results['orig']['final_mae']
-        plt.axhline(y=baseline_mae, color=trend_colors['Baseline'],
-                    linestyle='--', alpha=0.7, linewidth=2, label='Baseline')
+        baseline_metric = _extract_metric_value(results['orig'], metric_ctx['final_key'])
+        plt.axhline(y=baseline_metric, color=trend_colors['Baseline'],
+                    linestyle='--', alpha=0.7, linewidth=2, label='Базовая модель')
 
-    plt.xlabel('Percentage of Samples Removed')
-    plt.ylabel('Validation MAE')
-    plt.title('Validation MAE vs Percentage of Samples Removed\n(With Trend Lines)', fontsize=14, pad=20)
+    plt.xlabel('Доля удалённых объектов, %')
+    plt.ylabel(f'{metric_label_ru} на валидации')
+    plt.title(
+        f'{metric_short_label} на валидации в зависимости от доли удалённых объектов\n(со сглаженными трендами)',
+        fontsize=14,
+        pad=20,
+    )
     plt.xticks(x_points, ['0%'] + [f'{pct}%' for pct in n_remove_list])
     plt.grid(True, alpha=0.2)
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -260,26 +415,28 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
 def plot_training_history(history, model_name="Model", logger=None):
     """Визуализация истории обучения"""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    metric_ctx = _get_metric_context(history)
 
     # График потерь
     if 'train' in history and len(history['train']) > 0:
-        ax1.plot(history['train'], label='Train Loss', color='blue')
+        ax1.plot(history['train'], label='Ошибка на обучении', color='blue')
     if 'val' in history and len(history['val']) > 0:
-        ax1.plot(history['val'], label='Validation Loss', color='red')
+        ax1.plot(history['val'], label='Метрика на валидации', color='red')
 
-    ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('Loss')
-    ax1.set_title(f'{model_name} Training History')
+    ax1.set_xlabel('Эпоха')
+    ax1.set_ylabel('Значение')
+    ax1.set_title(f'История обучения: {model_name}')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    # График MAE
-    if 'final_mae' in history:
-        ax2.bar(['Final MAE'], [history['final_mae']], color='green')
-        ax2.text(0, history['final_mae'], f'{history["final_mae"]:.4f}',
+    # График основной метрики
+    final_metric = _extract_metric_value(history, metric_ctx['final_key'])
+    if not np.isnan(final_metric):
+        ax2.bar([metric_ctx['short_label_ru']], [final_metric], color='green')
+        ax2.text(0, final_metric, f'{final_metric:.4f}',
                  ha='center', va='bottom')
-        ax2.set_ylabel('MAE')
-        ax2.set_title('Final Validation MAE')
+        ax2.set_ylabel(metric_ctx['label_ru'])
+        ax2.set_title(f'Финальная метрика на валидации: {metric_ctx["short_label_ru"]}')
         ax2.grid(True, alpha=0.3, axis='y')
 
     plt.tight_layout()
@@ -296,6 +453,7 @@ def plot_combined_comparison(results, n_remove_list, logger=None):
         logger.log_message("Creating combined comparison visualization...")
 
     plt.figure(figsize=(12, 7))
+    metric_ctx = _get_metric_context(results)
 
     colors = plt.cm.Set2.colors
 
@@ -313,55 +471,55 @@ def plot_combined_comparison(results, n_remove_list, logger=None):
     for idx, method in enumerate(methods):
         color = colors[idx % len(colors)]
 
-        # Данные для final_mae (holdout validation)
-        final_mae_values = []
+        # Данные для финальной метрики на holdout validation
+        final_metric_values = []
         if 'orig' in results:
-            final_mae_values.append(results['orig']['final_mae'])
+            final_metric_values.append(_extract_metric_value(results['orig'], metric_ctx['final_key']))
         for pct in n_remove_list:
             key = f'{method}_{pct}pct'
             if key in results:
-                final_mae_values.append(results[key]['final_mae'])
+                final_metric_values.append(_extract_metric_value(results[key], metric_ctx['final_key']))
             else:
-                final_mae_values.append(np.nan)
+                final_metric_values.append(np.nan)
 
-        # Данные для best_val_mae (test during training)
-        test_mae_values = []
+        # Данные для лучшей метрики во время обучения
+        test_metric_values = []
         if 'orig' in results:
-            test_mae_values.append(results['orig']['best_val_mae'])
+            test_metric_values.append(_extract_metric_value(results['orig'], metric_ctx['best_key']))
         for pct in n_remove_list:
             key = f'{method}_{pct}pct'
             if key in results:
-                test_mae_values.append(results[key]['best_val_mae'])
+                test_metric_values.append(_extract_metric_value(results[key], metric_ctx['best_key']))
             else:
-                test_mae_values.append(np.nan)
+                test_metric_values.append(np.nan)
 
         # Отображаем линии
-        plt.plot(x_points, final_mae_values, 'o-', color=color, alpha=0.7,
-                 linewidth=2, markersize=6, label=f'{method} (Holdout)')
-        plt.plot(x_points, test_mae_values, 's--', color=color, alpha=0.5,
-                 linewidth=1.5, markersize=4, label=f'{method} (Test)')
+        plt.plot(x_points, final_metric_values, 'o-', color=color, alpha=0.7,
+                 linewidth=2, markersize=6, label=f'{method} (holdout)')
+        plt.plot(x_points, test_metric_values, 's--', color=color, alpha=0.5,
+                 linewidth=1.5, markersize=4, label=f'{method} (лучшая на test)')
 
     # Добавляем случайное удаление
     if 'random_10pct' in results:
-        final_random = [results['orig']['final_mae']]
-        test_random = [results['orig']['best_val_mae']]
+        final_random = [_extract_metric_value(results['orig'], metric_ctx['final_key'])]
+        test_random = [_extract_metric_value(results['orig'], metric_ctx['best_key'])]
         for pct in n_remove_list:
             key = f'random_{pct}pct'
             if key in results:
-                final_random.append(results[key]['final_mae'])
-                test_random.append(results[key]['best_val_mae'])
+                final_random.append(_extract_metric_value(results[key], metric_ctx['final_key']))
+                test_random.append(_extract_metric_value(results[key], metric_ctx['best_key']))
             else:
                 final_random.append(np.nan)
                 test_random.append(np.nan)
 
         plt.plot(x_points, final_random, 'o-', color='gray', alpha=0.7,
-                 linewidth=2, markersize=6, label='Random (Holdout)')
+                 linewidth=2, markersize=6, label='Случайное удаление (holdout)')
         plt.plot(x_points, test_random, 's--', color='gray', alpha=0.5,
-                 linewidth=1.5, markersize=4, label='Random (Test)')
+                 linewidth=1.5, markersize=4, label='Случайное удаление (лучшая на test)')
 
-    plt.xlabel('Percentage of Samples Removed')
-    plt.ylabel('MAE')
-    plt.title('Comparison of Holdout vs Test MAE for Different Removal Methods',
+    plt.xlabel('Доля удалённых объектов, %')
+    plt.ylabel(metric_ctx['label_ru'])
+    plt.title('Сравнение holdout и test-метрики для разных методов удаления',
               fontsize=14, pad=20)
     plt.xticks(x_points, ['0%'] + [f'{pct}%' for pct in n_remove_list])
     plt.grid(True, alpha=0.2)
@@ -371,8 +529,8 @@ def plot_combined_comparison(results, n_remove_list, logger=None):
 
     # Добавляем информационный текст
     plt.figtext(0.5, 0.01,
-                'Solid lines with circles: Holdout Validation (unbiased estimate)\n'
-                'Dashed lines with squares: Test during training (used for model selection)',
+                'Сплошные линии с кружками: holdout validation\n'
+                'Пунктирные линии с квадратами: лучшая метрика на test во время обучения',
                 ha='center', fontsize=10, style='italic', alpha=0.7)
 
     plt.tight_layout()

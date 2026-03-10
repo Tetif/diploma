@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -37,7 +38,7 @@ DEFAULT_PYTORCH_PARAMS = {
 }
 
 class SimpleNN(nn.Module):
-    def __init__(self, input_size, layers=None, dropout=0.2):
+    def __init__(self, input_size, layers=None, dropout=0.2, output_size=1):
         super(SimpleNN, self).__init__()
         if layers is None:
             layers = DEFAULT_PYTORCH_PARAMS['simple']['layers']
@@ -52,7 +53,7 @@ class SimpleNN(nn.Module):
                 modules.append(nn.Dropout(dropout))
             prev_size = layer_size
 
-        modules.append(nn.Linear(prev_size, 1))
+        modules.append(nn.Linear(prev_size, output_size))
 
         self.network = nn.Sequential(*modules)
 
@@ -61,7 +62,7 @@ class SimpleNN(nn.Module):
 
 
 class ImprovedNN(nn.Module):
-    def __init__(self, input_size, layers=None, dropout=None, batch_norm=True):
+    def __init__(self, input_size, layers=None, dropout=None, batch_norm=True, output_size=1):
         super(ImprovedNN, self).__init__()
         if layers is None:
             layers = DEFAULT_PYTORCH_PARAMS['improved']['layers']
@@ -84,7 +85,7 @@ class ImprovedNN(nn.Module):
 
             prev_size = layer_size
 
-        modules.append(nn.Linear(prev_size, 1))
+        modules.append(nn.Linear(prev_size, output_size))
 
         self.network = nn.Sequential(*modules)
 
@@ -212,7 +213,7 @@ class DistilledModelWrapper(BaseModel):
     """Обертка для дистилляции не-нейросетевых моделей в нейросеть"""
 
     def __init__(self, base_model, input_size, device='cpu', model_architecture='simple',
-                 distillation_epochs=50, temperature=2.0):
+                 distillation_epochs=50, temperature=2.0, num_classes=1):
         super().__init__()
         self.base_model = base_model
         self.input_size = input_size
@@ -220,13 +221,14 @@ class DistilledModelWrapper(BaseModel):
         self.model_architecture = model_architecture
         self.distillation_epochs = distillation_epochs
         self.temperature = temperature
+        self.num_classes = num_classes
         self.is_distilled = False
 
         # Создаем студенческую нейросеть (без dropout для influence functions)
         if model_architecture == 'improved':
-            self.student_model = ImprovedNN(input_size, dropout=0.0).to(device)  # Отключаем dropout
+            self.student_model = ImprovedNN(input_size, dropout=0.0, output_size=num_classes).to(device)  # Отключаем dropout
         else:
-            self.student_model = SimpleNN(input_size, dropout=0.0).to(device)  # Отключаем dropout
+            self.student_model = SimpleNN(input_size, dropout=0.0, output_size=num_classes).to(device)  # Отключаем dropout
 
         self.optimizer = optim.Adam(self.student_model.parameters(),
                                     lr=DEFAULT_PYTORCH_PARAMS['simple']['learning_rate'])
@@ -248,10 +250,14 @@ class DistilledModelWrapper(BaseModel):
         # Получаем "мягкие" предсказания от базовой модели
         debug_print("Generating teacher predictions for distillation...")
         teacher_predictions = self.base_model.predict(X)
+        teacher_predictions = np.asarray(teacher_predictions)
 
-        # Преобразуем в тензоры
+        # Преобразуем в тензоры: для многокласса (N, num_classes) не делаем reshape в (-1, 1)
         X_tensor = torch.FloatTensor(X).to(self.device)
-        teacher_tensor = torch.FloatTensor(teacher_predictions).reshape(-1, 1).to(self.device)
+        if teacher_predictions.ndim == 2 and teacher_predictions.shape[1] > 1:
+            teacher_tensor = torch.FloatTensor(teacher_predictions).to(self.device)
+        else:
+            teacher_tensor = torch.FloatTensor(teacher_predictions).reshape(-1, 1).to(self.device)
 
         # Обучаем студенческую модель имитировать учителя
         self.student_model.train()
@@ -279,7 +285,8 @@ class DistilledModelWrapper(BaseModel):
         self.student_model.eval()
         with torch.no_grad():
             X_tensor = torch.FloatTensor(X).to(self.device)
-            return self.student_model(X_tensor).cpu().numpy().flatten()
+            out = self.student_model(X_tensor).cpu().numpy()
+            return out.flatten() if out.ndim == 1 or out.shape[1] == 1 else out
 
     def named_parameters(self):
         """Возвращает параметры студенческой модели для influence методов"""

@@ -12,3 +12,4 @@ __pycache__/
 overfitting_report.md
 docs/overfitting_causes_and_solutions.md
 docs/zillow_improvements.md
+/removal_plot_output/

@@ -145,6 +145,7 @@ class ExperimentService:
             model_params = {
                 'model_type': config.get('model_type', 'random_forest'),
                 'task_type': cfg.task_type,
+                'available_metrics': list(getattr(cfg, 'metrics', [])),
                 'input_size': input_size,
                 'device': DEVICE,
                 'removal_strategy': config.get('removal_strategy', 'remove_lowest_influence'),
