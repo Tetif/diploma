@@ -57,19 +57,21 @@ python main.py --dataset adult
 
 ## Датасеты
 
-| Имя | Тип | В репозитории |
-|-----|-----|---------------|
-| `wine` | регрессия | да |
-| `housing` | регрессия | да |
-| `adult` | бинарная классификация | да |
-| `zillow` | регрессия | частично (нужен `properties_2016.csv` с Kaggle) |
-| `covertype` | 7 классов | скачать |
-| `electric` | временной ряд | скачать |
-| `mnist` | изображения | скачать / auto |
-| `imdb` | текст | скачать |
-| `cifar10` | изображения | скачать / auto |
+| Имя | Тип | В репозитории | Источник |
+|-----|-----|---------------|----------|
+| `wine` | регрессия | да | [Wine Quality (Kaggle)](https://www.kaggle.com/datasets/yasserh/wine-quality-dataset) |
+| `housing` | регрессия | да | [California Housing (Kaggle)](https://www.kaggle.com/datasets/camnugent/california-housing-prices) |
+| `adult` | бинарная классификация | да | [Adult Census Income (Kaggle)](https://www.kaggle.com/datasets/uciml/adult-census-income) |
+| `zillow` | регрессия | частично | [Zillow Prize (Kaggle)](https://www.kaggle.com/c/zillow-prize-1/data) |
+| `covertype` | 7 классов | скачать | [Forest Cover Type (Kaggle)](https://www.kaggle.com/c/forest-cover-type-prediction/data) |
+| `electric` | временной ряд | скачать | [Household Power Consumption (Kaggle)](https://www.kaggle.com/datasets/imtkaggleteam/household-power-consumption) |
+| `mnist` | изображения | скачать / auto | [MNIST Digit Recognizer (Kaggle)](https://www.kaggle.com/c/digit-recognizer/data) |
+| `imdb` | текст | скачать | [IMDB 50K Movie Reviews (Kaggle)](https://www.kaggle.com/datasets/lakshmi25npathi/imdb-dataset-of-50k-movie-reviews) |
+| `cifar10` | изображения | скачать / auto | [CIFAR-10 (U of Toronto)](https://www.cs.toronto.edu/~kriz/cifar.html) |
 
-Подробнее: [docs/DATASETS_OVERVIEW_RU.md](docs/DATASETS_OVERVIEW_RU.md).
+Для `zillow` в репозитории есть `train_2016_v2.csv`; для полного пайплайна дополнительно нужен `properties_2016.csv` с Kaggle.
+
+Подробнее о структуре файлов: [datasets/README.md](datasets/README.md), описание признаков: [docs/DATASETS_OVERVIEW_RU.md](docs/DATASETS_OVERVIEW_RU.md).
 
 ## Результаты экспериментов
 
