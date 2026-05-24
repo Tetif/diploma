@@ -124,7 +124,6 @@ docker compose up --build
 ## Документация
 
 - [Обзор датасетов](docs/DATASETS_OVERVIEW_RU.md)
-- [Дистилляция](docs/DISTILLATION_DETAILED_RU.md)
 - [Архитектура (диаграммы)](docs/ARCHITECTURE_DIAGRAMS_RU.md)
 - [Быстрый старт микросервиса](QUICK_START_RU.md)
 
@@ -142,7 +141,3 @@ pip install "dask[complete]>=2023.1.0" "zarr>=3.0.0"
 ## Лицензия
 
 MIT — см. [LICENSE](LICENSE).
-
-## Цитирование
-
-При использовании кода или идей проекта укажите pyDVL и источники данных (UCI, Kaggle Zillow Prize и т.д.).
