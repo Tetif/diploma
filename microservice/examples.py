@@ -197,77 +197,36 @@ def example_full_workflow():
     import numpy as np
     import time
     
-    print("🚀 Starting complete workflow example...")
+    print("Полный пример: запуск и опрос API")
     print("=" * 60)
-    
-    # Step 1: Start experiment
-    print("\n1️⃣  Starting experiment...")
+
+    print("\n1. Запуск эксперимента...")
     experiment_id = example_start_experiment_api()
     if not experiment_id:
         return
     
-    # Step 2: Poll status
-    print("\n2️⃣  Polling experiment status...")
+    print("\n2. Опрос статуса...")
     status = example_poll_status(experiment_id)
     
     if status['status'] != 'completed':
         print("✗ Experiment failed")
         return
     
-    # Step 3: Get results
-    print("\n3️⃣  Retrieving results...")
+    print("\n3. Получение результатов...")
     results = example_get_results(experiment_id)
     
-    # Step 4: Get influence weights
-    print("\n4️⃣  Retrieving influence weights...")
+    print("\n4. Веса influence...")
     weights = example_get_influence_weights(experiment_id, "BetaShapley")
     
-    # Step 5: Compare methods
-    print("\n5️⃣  Comparing influence methods...")
+    print("\n5. Сравнение методов...")
     method_stats = example_compare_methods(experiment_id)
     
     print("\n" + "=" * 60)
-    print("✓ Workflow completed successfully!")
+    print("Готово.")
 
 
-# ==================== Streamlit Examples ====================
-
-# The Streamlit interface is self-contained and provides:
-# - GUI for starting experiments
-# - Real-time status tracking
-# - Interactive visualization of results
-# - Influence weights browser
-# - Experiment comparison tools
-
-# To use: streamlit run microservice/app.py
-
-# ==================== Command Line Usage ====================
-
-# Start both API and UI:
-# python microservice/run_services.py
-
-# Start only API:
-# python microservice/run_api.py
-
-# Start only UI:
-# python microservice/run_ui.py
-
-# View API documentation:
-# http://localhost:8000/docs
-
-# Access Streamlit UI:
-# http://localhost:8501
-
-# ==================== Docker Usage ====================
-
-# Build and run with Docker Compose:
-# docker-compose up
-
-# This will start:
-# - API on http://localhost:8000
-# - UI on http://localhost:8501
-
-# ==================== Advanced Usage ====================
+# UI: streamlit run microservice/app.py
+# API: python microservice/run_api.py или run_services.py
 
 def example_batch_experiments():
     """Example of running multiple experiments in batch"""

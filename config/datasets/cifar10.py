@@ -37,7 +37,7 @@ class Cifar10Config(BaseDatasetConfig):
 
     metrics = ['accuracy', 'f1_weighted', 'confusion_matrix']
 
-    max_samples = 15000  # ограничение для скорости (полный train ~50k)
+    max_samples = None  # использовать все доступные изображения по классам
 
     def __init__(self):
         super().__init__()

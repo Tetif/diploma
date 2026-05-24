@@ -1,0 +1,27 @@
+flowchart TB
+    subgraph entry [Точка входа]
+        mainMod["Главный модуль\nзапуска экспериментов"]
+    end
+
+    subgraph core [Ядро]
+        direction TB
+        cfg["Параметры эксперимента\nи описание датасетов"]
+        data["Загрузка данных,\nпредобработка признаков"]
+        models["Модели\nдеревья / нейросети"]
+        runner["Цикл экспериментов:\nобучение, влияние, удаление"]
+        infl["Методы оценки влияния\nнаблюдений"]
+    end
+
+    subgraph out [Результат]
+        viz["Визуализация\nи сводки"]
+    end
+
+    mainMod --> cfg
+    mainMod --> data
+    mainMod --> models
+    mainMod --> runner
+    mainMod --> viz
+    data --> runner
+    models --> runner
+    runner --> infl
+    infl --> models

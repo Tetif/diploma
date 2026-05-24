@@ -9,10 +9,29 @@ sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
-from visualization.plots import plot_influence_distribution as viz_plot_influence_distribution
-from visualization.plots import plot_results_enhanced as viz_plot_results_enhanced
+from config.settings import METRIC_METADATA
+from microservice.plotting_plotly_helpers import (
+    _pct_vs_best,
+    _resolve_method_color,
+    _should_show_pct_vs_best,
+    _trend_colors_for_methods,
+    mean_pct_abs_diff_from_pointwise_best,
+    removal_curve_rank_scores,
+)
 from typing import Dict, List, Any, Optional, Tuple
+
+
+def _load_viz_matplotlib():
+    """Ленивый импорт matplotlib-визуализации с Agg (только при вызове ExperimentPlotter)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from visualization.plots import (
+        plot_influence_distribution as viz_plot_influence_distribution,
+        plot_results_enhanced as viz_plot_results_enhanced,
+    )
+
+    return viz_plot_influence_distribution, viz_plot_results_enhanced
 
 
 class ExperimentPlotter:
@@ -24,8 +43,9 @@ class ExperimentPlotter:
         """Plot distribution of influence weights"""
         try:
             # Use shared matplotlib-based visualization when available
+            viz_dist, _ = _load_viz_matplotlib()
             scores = {method: np.array(weights)}
-            plt_obj = viz_plot_influence_distribution(scores, plot_name_suffix=method)
+            plt_obj = viz_dist(scores, plot_name_suffix=method)
             return plt_obj
         except Exception:
             # Fallback to local Plotly implementation
@@ -88,7 +108,8 @@ class ExperimentPlotter:
         """Plot impact of data removal on model performance"""
         try:
             # Prefer shared matplotlib visualization for results comparison
-            plt_obj = viz_plot_results_enhanced(results, removal_percentages)
+            _, viz_enh = _load_viz_matplotlib()
+            plt_obj = viz_enh(results, removal_percentages)
             return plt_obj
         except Exception:
             fig = go.Figure()
@@ -144,7 +165,10 @@ class ExperimentPlotter:
         """Compare influence-based removal vs random removal"""
         try:
             # Use shared matplotlib-enhanced visualization to show random runs and trends
-            plt_obj = viz_plot_results_enhanced(results, removal_percentages, random_run_results=random_run_results)
+            _, viz_enh = _load_viz_matplotlib()
+            plt_obj = viz_enh(
+                results, removal_percentages, random_run_results=random_run_results
+            )
             return plt_obj
         except Exception:
             fig = go.Figure()
@@ -304,3 +328,206 @@ class ExperimentPlotter:
         )
         
         return fig
+
+
+def _bar_text_vs_best(
+    values: List[float], value_fmt: str, higher_is_better: bool
+) -> List[str]:
+    """Значение + отклонение от лучшего в группе, % (как в matplotlib)."""
+    deltas = _pct_vs_best([float(v) for v in values], higher_is_better)
+    lines = []
+    for i, v in enumerate(values):
+        main = value_fmt % float(v)
+        d = deltas[i]
+        if d is not None and _should_show_pct_vs_best(d):
+            lines.append(f"{main}<br>к лучш.: {d:+.1f}%")
+        else:
+            lines.append(main)
+    return lines
+
+
+def plotly_removal_auc_bars(
+    aucs: Dict[str, Any],
+    methods_filter: List[str],
+    metric_name: str,
+    metric_short: str = "AUC",
+) -> go.Figure:
+    """
+    Столбцы AUC только для методов из methods_filter (те же, что на графике removal).
+    Сортировка по rank_score (как experiment_summary).
+    """
+    colors = _trend_colors_for_methods()
+    present: List[str] = []
+    for m in methods_filter:
+        v = aucs.get(m)
+        if v is None:
+            continue
+        try:
+            vf = float(v)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(vf):
+            continue
+        present.append(m)
+    fig = go.Figure()
+    if not present:
+        fig.update_layout(
+            title="AUC кривых removal — нет данных для выбранных серий",
+            template="plotly_white",
+            height=360,
+        )
+        return fig
+    sub = {m: float(aucs[m]) for m in present}
+    rank_scores = removal_curve_rank_scores(sub, metric_name, METRIC_METADATA)
+    order = sorted(
+        present,
+        key=lambda m: (
+            rank_scores.get(m, float("-inf"))
+            if np.isfinite(rank_scores.get(m, float("nan")))
+            else float("-inf")
+        ),
+        reverse=True,
+    )
+    vals = [sub[m] for m in order]
+    bar_colors = [_resolve_method_color(m, colors) for m in order]
+    meta = (METRIC_METADATA or {}).get(metric_name) or {}
+    higher = bool(meta.get("higher_is_better", True))
+    text_lines = _bar_text_vs_best(vals, "%.4f", higher)
+    fig.add_trace(
+        go.Bar(
+            x=order,
+            y=vals,
+            marker=dict(color=bar_colors, line=dict(color="#333", width=1)),
+            text=text_lines,
+            textposition="outside",
+            textfont=dict(size=10),
+            hovertemplate="<b>%{x}</b><br>AUC: %{y:.4f}<extra></extra>",
+        )
+    )
+    direction = "выше лучше" if higher else "ниже лучше"
+    fig.update_layout(
+        title=(
+            f"Интеграл кривой removal (AUC), {metric_short} — {direction}<br>"
+        ),
+        xaxis_title="Метод / стратегия",
+        yaxis_title="AUC",
+        template="plotly_white",
+        height=max(420, min(720, 60 * len(order) + 200)),
+        margin=dict(t=100, b=120),
+        showlegend=False,
+        xaxis=dict(tickangle=-38),
+    )
+    return fig
+
+
+def plotly_removal_mean_pct_diff_from_pointwise_best_bars(
+    removal_data: Dict[str, Any],
+    methods_filter: List[str],
+    metric_name: str,
+    metric_short: str = "метрика",
+) -> go.Figure:
+    """
+    Среднее по точкам |v−ref|/|ref|·100%, где ref — лучшее значение среди выбранных кривых в этой точке.
+    """
+    meta = (METRIC_METADATA or {}).get(metric_name) or {}
+    higher = bool(meta.get("higher_is_better", True))
+    means, n_pts = mean_pct_abs_diff_from_pointwise_best(
+        removal_data, methods_filter, higher
+    )
+    fig = go.Figure()
+    colors = _trend_colors_for_methods()
+    present: List[str] = []
+    for m in methods_filter:
+        v = means.get(m)
+        if v is None:
+            continue
+        if not np.isfinite(float(v)):
+            continue
+        present.append(m)
+    if not present or n_pts <= 0:
+        fig.update_layout(
+            title="Нет общих точек % удаления у выбранных кривых",
+            template="plotly_white",
+            height=360,
+        )
+        return fig
+
+    sub = {m: float(means[m]) for m in present}
+    order = sorted(present, key=lambda m: sub[m])
+    vals = [sub[m] for m in order]
+    bar_colors = [_resolve_method_color(m, colors) for m in order]
+    text_lines = [f"{v:.2f}" for v in vals]
+    fig.add_trace(
+        go.Bar(
+            x=order,
+            y=vals,
+            marker=dict(color=bar_colors, line=dict(color="#333", width=1)),
+            text=text_lines,
+            textposition="outside",
+            textfont=dict(size=10),
+            hovertemplate=(
+                f"<b>%{{x}}</b><br>Среднее |v−best|/|best|·100%: %{{y:.2f}}% "
+                f"<br>(точек: {n_pts})<extra></extra>"
+            ),
+        )
+    )
+    fig.update_layout(
+        title=f"Среднее отклонение от лучшей кривой в точке, {metric_short}",
+        xaxis_title="Метод",
+        yaxis_title="Среднее отклонение, %",
+        template="plotly_white",
+        height=max(420, min(720, 60 * len(order) + 200)),
+        margin=dict(t=72, b=120),
+        showlegend=False,
+        xaxis=dict(tickangle=-38),
+    )
+    return fig
+
+
+def plotly_computation_metric_bars(
+    rows: List[Dict[str, Any]],
+    field: str,
+    title: str,
+    yaxis_title: str,
+    value_fmt: str,
+) -> go.Figure:
+    """Один из графиков max_wanted_mb / ram_mb / duration_s по этапам *_computation."""
+    fig = go.Figure()
+    if not rows:
+        fig.update_layout(
+            title=title + " — нет данных",
+            template="plotly_white",
+            height=320,
+        )
+        return fig
+    colors = _trend_colors_for_methods()
+    methods = [r["method"] for r in rows]
+    vals = [float(r[field]) for r in rows]
+    bar_colors = [_resolve_method_color(m, colors) for m in methods]
+    # Память и время: чем меньше тем лучше
+    text_lines = _bar_text_vs_best(vals, value_fmt, higher_is_better=False)
+    fig.add_trace(
+        go.Bar(
+            x=methods,
+            y=vals,
+            marker=dict(color=bar_colors, line=dict(color="#222", width=0.5)),
+            text=text_lines,
+            textposition="outside",
+            textfont=dict(size=10),
+            hovertemplate=(
+                f"<b>%{{x}}</b><br>{yaxis_title}: "
+                f"%{{y:{value_fmt[1:]}}}<extra></extra>"
+            ),
+        )
+    )
+    fig.update_layout(
+        title=title + "<br><sub>к лучш. — отклонение от минимума в группе (меньше лучше), %</sub>",
+        xaxis_title="Метод",
+        yaxis_title=yaxis_title,
+        template="plotly_white",
+        height=max(380, min(680, 52 * len(methods) + 180)),
+        margin=dict(t=90, b=100),
+        showlegend=False,
+        xaxis=dict(tickangle=-36),
+    )
+    return fig

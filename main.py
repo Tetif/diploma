@@ -16,6 +16,7 @@ from config.settings import (
     CURRENT_DATASET, get_model_config, get_selected_metric, get_metric_metadata,
     MODEL_RUN_CONFIG, get_n_remove_list, get_selected_loss_removal_methods,
     REMOVAL_STRATEGIES,
+    MODEL_FIT_MODE, FIT_MODE_EPOCHS,
 )
 from config import DatasetRegistry
 from experiments.logger import ExperimentLogger
@@ -28,6 +29,7 @@ from visualization.plots import (
     plot_results_enhanced,
     plot_combined_comparison,
     save_removal_metrics_csv,
+    plot_method_comparison_bars,
 )
 from utils.helpers import (
     set_random_seeds, sample_data, split_data,
@@ -63,6 +65,7 @@ def main(dataset_name=None):
     logger.log_message(f"DATASET: {dataset_config.name.upper()}")
     logger.log_message(f"TASK TYPE: {dataset_config.task_type}")
     logger.log_message(f"TARGET COLUMN: {dataset_config.target_column}")
+    logger.log_message(f"FIT MODE: {MODEL_FIT_MODE}")
     logger.log_message(f"{'='*60}")
 
     gpu_available = check_gpu_availability()
@@ -75,6 +78,7 @@ def main(dataset_name=None):
     # Конфигурация эксперимента
     config = {
         'debug_mode': DEBUG_MODE,
+        'fit_mode': MODEL_FIT_MODE,
         'pyDVL_version': pydvl.__version__,
         'torch_version': torch.__version__,
         'dataset': {
@@ -91,6 +95,9 @@ def main(dataset_name=None):
             'device': DEVICE,
             # Набор стратегий удаления для influence-методов (одна или несколько)
             'removal_strategies': MODEL_RUN_CONFIG.get('removal_strategies', REMOVAL_STRATEGIES),
+            'removal_per_class': MODEL_RUN_CONFIG.get('removal_per_class', False),
+            'removal_stratify_target': MODEL_RUN_CONFIG.get('removal_stratify_target', False),
+            'removal_stratify_n_bins': MODEL_RUN_CONFIG.get('removal_stratify_n_bins', 10),
             'use_distillation': DISTILLATION_CONFIG['use_distillation'],
             'distillation_epochs': DISTILLATION_CONFIG['distillation_epochs'],
             'temperature': DISTILLATION_CONFIG['temperature'],
@@ -117,25 +124,36 @@ def main(dataset_name=None):
             logger.log_message(f"  Classes: {le.classes_}")
 
     # Отделяем данные для holdout validation
-    X_temp, X_holdout_validation, y_temp, y_holdout_validation = train_test_split(
-        X, y,
+    X_temp, X_holdout_validation, y_temp, y_holdout_validation = split_data(
+        X,
+        y,
         test_size=cfg.val_size,
         random_state=RANDOM_STATE,
-        stratify=y if cfg.stratify else None
+        stratify=y if cfg.stratify else None,
+        time_series=cfg.use_time_split,
     )
     logger.log_message(f"Holdout validation set created: {len(X_holdout_validation)} rows (untouched)")
 
     # Теперь от оставшихся данных берем подвыборку для быстрых тестов (по умолчанию 100%)
     n = EXPERIMENT_CONFIG['sample_size_percentage'] / 100.0
     logger.log_message(f"Taking {n * 100}%")
-    X_sample, y_sample = sample_data(X_temp, y_temp, sample_fraction=n)
+    X_sample, y_sample = sample_data(
+        X_temp,
+        y_temp,
+        sample_fraction=n,
+        preserve_order=cfg.use_time_split,
+    )
 
     logger.log_message(f"Training sample size: {X_sample.shape[0]} rows, {X_sample.shape[1]} features")
 
     # Разделяем подвыборку на train и test для обучения моделей
     logger.log_message("Splitting training sample into train/test sets...")
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_sample, y_sample, test_size=EXPERIMENT_CONFIG['test_size'], random_state=RANDOM_STATE
+    X_train, X_test, y_train, y_test = split_data(
+        X_sample,
+        y_sample,
+        test_size=EXPERIMENT_CONFIG['test_size'],
+        random_state=RANDOM_STATE,
+        time_series=cfg.use_time_split,
     )
 
     logger.log_message(f"Final data split:")
@@ -190,7 +208,9 @@ def main(dataset_name=None):
     except ValueError as e:
         logger.log_message(f"Warning: {e}. Using default parameters.")
         from config.settings import DATASET_MODEL_CONFIGS
-        dataset_model_config = DATASET_MODEL_CONFIGS.get(dataset_name, {}).get(model_type, {})
+        fit_configs = DATASET_MODEL_CONFIGS.get(dataset_name, {})
+        normal_config = fit_configs.get(MODEL_FIT_MODE, fit_configs.get('normal', {}))
+        dataset_model_config = normal_config.get(model_type, {}) if isinstance(normal_config, dict) else {}
 
     model_params = config['model_params'].copy()
     model_params['input_size'] = actual_input_size
@@ -199,8 +219,14 @@ def main(dataset_name=None):
 
     # Добавляем оптимальные параметры в model_params (но не перезаписываем уже установленные)
     for key, value in dataset_model_config.items():
-        if key not in model_params or key in ['learning_rate', 'num_leaves', 'max_depth', 'iterations', 'n_estimators', 'layers', 'dropout']:
+        if key not in model_params or key in [
+            'learning_rate', 'num_leaves', 'max_depth', 'iterations', 'n_estimators',
+            'layers', 'dropout', 'base_channels',
+        ]:
             model_params[key] = value
+
+    if cfg.task_type == 'multiclass_classification':
+        model_params['num_class'] = int(len(np.unique(np.asarray(y_train).ravel())))
 
     # Для бинарной классификации (PyTorch): pos_weight для BCEWithLogitsLoss уменьшает эффект дисбаланса классов
     if cfg.task_type == 'binary_classification' and model_params.get('model_type') == 'pytorch':
@@ -211,7 +237,11 @@ def main(dataset_name=None):
 
     # n_epochs: из EXPERIMENT_CONFIG для PyTorch/дистилляции; для tree-моделей всегда 1 (игнорируется)
     if model_params['model_type'] == 'pytorch' or model_params.get('use_distillation', False):
-        n_epochs = EXPERIMENT_CONFIG.get('n_epochs', 500)
+        if MODEL_FIT_MODE != 'normal' and MODEL_FIT_MODE in FIT_MODE_EPOCHS:
+            n_epochs = FIT_MODE_EPOCHS[MODEL_FIT_MODE]
+            logger.log_message(f"FIT MODE '{MODEL_FIT_MODE}': n_epochs overridden to {n_epochs}")
+        else:
+            n_epochs = EXPERIMENT_CONFIG.get('n_epochs', 500)
     else:
         n_epochs = 1
 
@@ -227,6 +257,9 @@ def main(dataset_name=None):
     config['experiment_params'] = {
         'n_remove_percentages': n_remove_list,
         'removal_strategies': model_params.get('removal_strategies', REMOVAL_STRATEGIES),
+        'removal_per_class': model_params.get('removal_per_class', False),
+        'removal_stratify_target': model_params.get('removal_stratify_target', False),
+        'removal_stratify_n_bins': model_params.get('removal_stratify_n_bins', 10),
         'loss_removal_methods': get_selected_loss_removal_methods(),
     }
     logger.save_config(config)
@@ -263,6 +296,8 @@ def main(dataset_name=None):
     plot_results_enhanced(results, n_remove_list, logger, random_run_results=random_run_results)
     plt.show()
 
+    plot_method_comparison_bars(logger, results, n_remove_list)
+
     # plot_combined_comparison(results, n_remove_list, logger)
     # plt.show()
 
@@ -281,7 +316,15 @@ def main(dataset_name=None):
     }
 
     influence_stats = get_influence_statistics(scores_raw)
-    logger.generate_summary(config, model_metrics, influence_stats, scores, scores_raw)
+    logger.generate_summary(
+        config,
+        model_metrics,
+        influence_stats,
+        scores,
+        scores_raw,
+        removal_results=results,
+        n_remove_list=n_remove_list,
+    )
 
     logger.log_message("Program completed successfully!")
     logger.log_message(f"All results saved in: {logger.get_experiment_dir()}")

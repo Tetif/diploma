@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader
 from joblib import parallel_config
 from scipy.stats import rankdata
+from sklearn.preprocessing import LabelEncoder
 from tqdm import tqdm
 
 from pydvl.valuation.dataset import Dataset
@@ -93,8 +94,11 @@ class SafeModelWrapper:
                 return np.zeros(len(X), dtype=int)
     
     def get_params(self, deep=True):
-        # Required for sklearn compatibility - return only model, not other kwargs
-        # This ensures clone() only passes 'model' parameter
+        # When deep=True, return a deepcopy so that sklearn's clone() creates
+        # an independent copy with separate weights (critical for PyTorch models).
+        if deep and self.model is not None:
+            from copy import deepcopy
+            return {'model': deepcopy(self.model)}
         return {'model': self.model}
     
     def set_params(self, **params):
@@ -123,6 +127,7 @@ class InfluenceMethods:
         self.logger = logger
         self.dataset_config = dataset_config
         self.methods = {}
+        self._is_multiclass = False
 
     @staticmethod
     def _extract_torch_model(model_wrapper):
@@ -138,6 +143,10 @@ class InfluenceMethods:
         # Try direct model attribute
         influence_model = getattr(model_wrapper, "model", None)
         if influence_model is not None:
+            # Distilled wrapper usually stores nn.Module in student_model.
+            nested_student = getattr(influence_model, "student_model", None)
+            if nested_student is not None and isinstance(nested_student, torch.nn.Module):
+                return nested_student
             # If it's already nn.Module, use it
             if isinstance(influence_model, torch.nn.Module):
                 return influence_model
@@ -153,11 +162,77 @@ class InfluenceMethods:
         # Last resort: return None to signal failure
         return None
 
+    @staticmethod
+    def _last_linear_out_features(module):
+        """Output size of the last nn.Linear (for matching CrossEntropy vs MSE targets)."""
+        if module is None:
+            return 1
+        last_lin = None
+        for m in module.modules():
+            if isinstance(m, torch.nn.Linear):
+                last_lin = m
+        return int(last_lin.out_features) if last_lin is not None else 1
+
+    @staticmethod
+    def _ensure_multiclass_ce_labels(y_train, y_val, num_classes):
+        """
+        Map labels to [0, num_classes - 1] for CrossEntropy. Handles common 1..K coding.
+        """
+        y_tr = np.asarray(y_train, dtype=np.int64).ravel()
+        y_va = np.asarray(y_val, dtype=np.int64).ravel()
+        ymin = int(min(y_tr.min(), y_va.min()))
+        ymax = int(max(y_tr.max(), y_va.max()))
+        if ymin >= 1 and ymax == num_classes:
+            y_tr = y_tr - 1
+            y_va = y_va - 1
+        if y_tr.max() >= num_classes or y_tr.min() < 0 or y_va.max() >= num_classes or y_va.min() < 0:
+            le = LabelEncoder()
+            le.fit(np.concatenate([y_tr, y_va]))
+            y_tr = le.transform(y_tr).astype(np.int64)
+            y_va = le.transform(y_va).astype(np.int64)
+        return y_tr, y_va
+
+    def _resolve_criterion(self, model_for_criterion):
+        """
+        Determine the loss criterion for influence computation.
+        Reuses the wrapped model's criterion when present.
+        For multiclass with K output logits (last Linear out_features == K),
+        uses CrossEntropyLoss; if K <= 1, falls back to MSELoss (legacy single-head).
+        """
+        influence_model = self._extract_torch_model(model_for_criterion)
+        out_dim = self._last_linear_out_features(influence_model)
+
+        criterion = getattr(model_for_criterion, "criterion", None)
+        if criterion is None and hasattr(model_for_criterion, "model"):
+            inner = getattr(model_for_criterion, "model", None)
+            if inner is not None and not isinstance(inner, torch.nn.Module):
+                criterion = getattr(inner, "criterion", None)
+
+        task_type = getattr(self.dataset_config, 'task_type', None) if self.dataset_config else None
+
+        if task_type == 'multiclass_classification':
+            if out_dim <= 1:
+                return torch.nn.MSELoss()
+            if isinstance(criterion, (torch.nn.CrossEntropyLoss, torch.nn.MSELoss)):
+                return criterion
+            return torch.nn.CrossEntropyLoss()
+
+        if criterion is not None:
+            return criterion
+        if task_type == 'binary_classification':
+            return torch.nn.BCEWithLogitsLoss()
+        return torch.nn.MSELoss()
+
     def setup_methods(self, pipeline, X_train, y_train, X_val, y_val,
                       preprocessor, methods_to_use=None):
         """
         Подготавливает методы оценки влияния
         """
+        self._is_multiclass = (
+            self.dataset_config is not None
+            and getattr(self.dataset_config, 'task_type', None) == 'multiclass_classification'
+        )
+
         if self.logger:
             self.logger.log_message("\n" + "=" * 60)
             self.logger.log_message("SETTING UP INFLUENCE METHODS")
@@ -268,15 +343,7 @@ class InfluenceMethods:
         if methods_to_use is None:
             methods_to_use = list(INFLUENCE_METHODS_CONFIG.get('valuation_methods', []))
 
-            is_pytorch = False
-            if hasattr(model_wrapper, 'model'):
-                inner_model = getattr(model_wrapper, 'model', None)
-                if isinstance(inner_model, torch.nn.Module):
-                    is_pytorch = True
-                elif hasattr(inner_model, 'model') and isinstance(getattr(inner_model, 'model', None), torch.nn.Module):
-                    is_pytorch = True
-            if hasattr(model_wrapper, 'student_model') and isinstance(getattr(model_wrapper, 'student_model', None), torch.nn.Module):
-                is_pytorch = True
+            is_pytorch = self._extract_torch_model(model_wrapper) is not None
 
             if is_pytorch:
                 methods_to_use = methods_to_use + list(INFLUENCE_METHODS_CONFIG.get('influence_methods', []))
@@ -382,29 +449,22 @@ class InfluenceMethods:
                         if self.logger:
                             self.logger.start_timing("Influence_setup")
 
-                        # Extract the actual torch.nn.Module from wrapped model
                         influence_model = self._extract_torch_model(model_wrapper)
                         if influence_model is None:
                             if self.logger:
                                 self.logger.log_message(f"ERROR: Could not extract nn.Module for {method_name}")
                             continue
 
-                        # Переключаем модель в eval режим для избежания случайных операций
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
-                        # Получить датасет-специфичные параметры влияния
                         dataset_name = self.dataset_config.name if self.dataset_config else None
                         if dataset_name:
                             influence_params = get_influence_params(dataset_name)
                         else:
                             influence_params = PYDVL_CONFIG['influence_params']
 
-                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
-                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
-                            criterion = torch.nn.BCEWithLogitsLoss()
-                        if criterion is None:
-                            criterion = torch.nn.MSELoss()
+                        criterion = self._resolve_criterion(_inner_model_for_criterion)
 
                         self.methods['Influence'] = DirectInfluence(
                             influence_model,
@@ -427,18 +487,13 @@ class InfluenceMethods:
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
-                        # Получить датасет-специфичные параметры влияния
                         dataset_name = self.dataset_config.name if self.dataset_config else None
                         if dataset_name:
                             influence_params = get_influence_params(dataset_name)
                         else:
                             influence_params = PYDVL_CONFIG['influence_params']
 
-                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
-                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
-                            criterion = torch.nn.BCEWithLogitsLoss()
-                        if criterion is None:
-                            criterion = torch.nn.MSELoss()
+                        criterion = self._resolve_criterion(_inner_model_for_criterion)
 
                         self.methods['ArnoldiInfluence'] = ArnoldiInfluence(
                             influence_model,
@@ -463,18 +518,13 @@ class InfluenceMethods:
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
-                        # Получить датасет-специфичные параметры влияния
                         dataset_name = self.dataset_config.name if self.dataset_config else None
                         if dataset_name:
                             influence_params = get_influence_params(dataset_name)
                         else:
                             influence_params = PYDVL_CONFIG['influence_params']
 
-                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
-                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
-                            criterion = torch.nn.BCEWithLogitsLoss()
-                        if criterion is None:
-                            criterion = torch.nn.MSELoss()
+                        criterion = self._resolve_criterion(_inner_model_for_criterion)
 
                         self.methods['CgInfluence'] = CgInfluence(
                             influence_model,
@@ -499,7 +549,6 @@ class InfluenceMethods:
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
-                        # Получить датасет-специфичные параметры влияния
                         dataset_name = self.dataset_config.name if self.dataset_config else None
                         if dataset_name:
                             influence_params = get_influence_params(dataset_name)
@@ -510,11 +559,7 @@ class InfluenceMethods:
                             if self.logger:
                                 self.logger.log_message(f"Influence: using default params (no dataset config)")
 
-                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
-                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
-                            criterion = torch.nn.BCEWithLogitsLoss()
-                        if criterion is None:
-                            criterion = torch.nn.MSELoss()
+                        criterion = self._resolve_criterion(_inner_model_for_criterion)
 
                         self.methods['LissaInfluence'] = LissaInfluence(
                             influence_model,
@@ -542,18 +587,13 @@ class InfluenceMethods:
                         if hasattr(influence_model, 'eval'):
                             influence_model.eval()
 
-                        # Получить датасет-специфичные параметры влияния
                         dataset_name = self.dataset_config.name if self.dataset_config else None
                         if dataset_name:
                             influence_params = get_influence_params(dataset_name)
                         else:
                             influence_params = PYDVL_CONFIG['influence_params']
 
-                        criterion = getattr(_inner_model_for_criterion, "criterion", None)
-                        if criterion is None and self.dataset_config and getattr(self.dataset_config, 'task_type', None) == 'binary_classification':
-                            criterion = torch.nn.BCEWithLogitsLoss()
-                        if criterion is None:
-                            criterion = torch.nn.MSELoss()
+                        criterion = self._resolve_criterion(_inner_model_for_criterion)
 
                         self.methods['NystroemSketchInfluence'] = NystroemSketchInfluence(
                             influence_model,
@@ -579,7 +619,8 @@ class InfluenceMethods:
 
         return self.methods, scorer_callable
 
-    def compute_scores(self, methods, X_train, y_train, preprocessor, X_val, y_val, pipeline):
+    def compute_scores(self, methods, X_train, y_train, preprocessor, X_val, y_val, pipeline,
+                        y_scaler=None):
         """Вычисление influence scores с сохранением сырых значений"""
         from .utils import _extract_numeric_values_from_result
 
@@ -601,6 +642,34 @@ class InfluenceMethods:
         y_train_arr = np.asarray(y_train).reshape(-1)
         y_val_arr = np.asarray(y_val).reshape(-1)
 
+        mw = pipeline.named_steps.get('model')
+        _inf_nn = self._extract_torch_model(mw)
+        _out_dim = self._last_linear_out_features(_inf_nn)
+
+        # Scale y for influence methods to match the model's training target space.
+        # The model was trained on scaled y (regression), so Hessian/gradients must
+        # use the same scale — otherwise influence scores are meaningless.
+        # Multiclass: single-output PyTorch models use MSE on float class indices (N,1);
+        # multi-logit models need CE with labels in [0, C-1]. Never apply regression y_scaler.
+        if self._is_multiclass:
+            if _out_dim <= 1:
+                y_train_arr_scaled = np.asarray(y_train_arr, dtype=np.float32).reshape(-1, 1)
+                y_val_arr_scaled = np.asarray(y_val_arr, dtype=np.float32).reshape(-1, 1)
+            else:
+                yt, yv = self._ensure_multiclass_ce_labels(y_train_arr, y_val_arr, _out_dim)
+                y_train_arr_scaled = yt
+                y_val_arr_scaled = yv
+        else:
+            y_train_arr_scaled = y_train_arr
+            y_val_arr_scaled = y_val_arr
+            if y_scaler is not None:
+                y_train_arr_scaled = y_scaler.transform(y_train_arr.reshape(-1, 1)).ravel()
+                y_val_arr_scaled = y_scaler.transform(y_val_arr.reshape(-1, 1)).ravel()
+                if self.logger:
+                    self.logger.log_message(
+                        f"Influence y-scaling applied: train y range [{y_train_arr_scaled.min():.4f}, {y_train_arr_scaled.max():.4f}]"
+                    )
+
         # Создание Dataset
         n_features = X_train_t.shape[1]
         feature_names = [f"x{i + 1}" for i in range(n_features)]
@@ -619,18 +688,35 @@ class InfluenceMethods:
         scores_raw = {}
 
         for name, method in methods.items():
+            last_error = None
             if self.logger:
                 self.logger.start_timing(f"{name}_computation")
                 self.logger.log_message(f"\n--- Computing {name} scores ---")
 
             try:
                 if name in ['Influence', 'ArnoldiInfluence', 'CgInfluence', 'LissaInfluence', 'NystroemSketchInfluence']:
-                    # Вычисление влияния для PyTorch моделей
+                    # Detect model device for correct tensor placement
+                    _inf_device = torch.device('cpu')
+                    try:
+                        _inf_device = next(method.model.parameters()).device
+                    except (StopIteration, AttributeError):
+                        pass
+
+                    # Build y tensors: CE needs LongTensor (N,); MSE needs FloatTensor (N, 1).
+                    if self._is_multiclass:
+                        if _out_dim <= 1:
+                            _y_train_t = torch.tensor(y_train_arr_scaled, dtype=torch.float32)
+                            _y_val_t = torch.tensor(y_val_arr_scaled, dtype=torch.float32)
+                        else:
+                            _y_train_t = torch.tensor(y_train_arr_scaled, dtype=torch.long)
+                            _y_val_t = torch.tensor(y_val_arr_scaled, dtype=torch.long)
+                    else:
+                        _y_train_t = torch.tensor(y_train_arr_scaled.reshape(-1, 1), dtype=torch.float32)
+                        _y_val_t = torch.tensor(y_val_arr_scaled.reshape(-1, 1), dtype=torch.float32)
+
+                    # Use scaled y for influence methods so gradients match the trained model
                     train_loader = DataLoader(
-                        TensorDataset(
-                            torch.FloatTensor(X_train_t),
-                            torch.FloatTensor(y_train_arr.reshape(-1, 1))
-                        ),
+                        TensorDataset(torch.FloatTensor(X_train_t), _y_train_t),
                         batch_size=PYDVL_CONFIG['influence_params']['batch_size'],
                         shuffle=False
                     )
@@ -657,8 +743,8 @@ class InfluenceMethods:
                         self.logger.log_message("Influence: DirectInfluence.fit completed")
 
                     zf = infl.influence_factors(
-                        torch.FloatTensor(X_val_t),
-                        torch.FloatTensor(y_val_arr.reshape(-1, 1))
+                        torch.tensor(X_val_t, dtype=torch.float32, device=_inf_device),
+                        _y_val_t.to(_inf_device)
                     )
 
                     # Diagnostics for influence factors
@@ -685,8 +771,8 @@ class InfluenceMethods:
                     _params = get_influence_params(self.dataset_config.name) if self.dataset_config and getattr(self.dataset_config, 'name', None) else PYDVL_CONFIG['influence_params']
                     val_batch_size = _params.get('influence_val_batch_size', PYDVL_CONFIG['influence_params'].get('influence_val_batch_size', 500))
                     per_train = np.zeros(n_train, dtype=np.float64)
-                    X_train_tensor = torch.FloatTensor(X_train_t)
-                    y_train_tensor = torch.FloatTensor(y_train_arr.reshape(-1, 1))
+                    X_train_tensor = torch.tensor(X_train_t, dtype=torch.float32, device=_inf_device)
+                    y_train_tensor = _y_train_t.to(_inf_device)
                     n_batches_val = (n_val + val_batch_size - 1) // val_batch_size
                     if self.logger:
                         self.logger.log_message(
@@ -873,6 +959,7 @@ class InfluenceMethods:
                         )
 
             except Exception as e:
+                last_error = e
                 if self.logger:
                     self.logger.log_message(f"ERROR computing {name} scores: {type(e).__name__}: {e}")
                     import traceback
@@ -884,5 +971,7 @@ class InfluenceMethods:
 
             if self.logger:
                 self.logger.end_timing(f"{name}_computation")
+                if last_error is not None:
+                    self.logger.record_cuda_oom_if_applicable(f"{name}_computation", last_error)
 
         return scores, scores_raw

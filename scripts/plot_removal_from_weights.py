@@ -96,13 +96,22 @@ def prepare_data(dataset_name: str):
         if y.dtype == 'object' or y.dtype.name == 'object':
             le = LabelEncoder()
             y = pd.Series(le.fit_transform(y), index=y.index)
-    X_temp, X_val, y_temp, y_val = train_test_split(
-        X, y, test_size=cfg.val_size, random_state=RANDOM_STATE, stratify=y if cfg.stratify else None
+    X_temp, X_val, y_temp, y_val = split_data(
+        X,
+        y,
+        test_size=cfg.val_size,
+        random_state=RANDOM_STATE,
+        stratify=y if cfg.stratify else None,
+        time_series=cfg.use_time_split,
     )
     n = EXPERIMENT_CONFIG['sample_size_percentage'] / 100.0
-    X_sample, y_sample = sample_data(X_temp, y_temp, sample_fraction=n)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_sample, y_sample, test_size=EXPERIMENT_CONFIG['test_size'], random_state=RANDOM_STATE
+    X_sample, y_sample = sample_data(X_temp, y_temp, sample_fraction=n, preserve_order=cfg.use_time_split)
+    X_train, X_test, y_train, y_test = split_data(
+        X_sample,
+        y_sample,
+        test_size=EXPERIMENT_CONFIG['test_size'],
+        random_state=RANDOM_STATE,
+        time_series=cfg.use_time_split,
     )
     preprocessor = PreprocessorFactory.create(dataset_config, None)
     preprocessor.fit(X_train)
@@ -125,8 +134,10 @@ def prepare_data(dataset_name: str):
     try:
         dataset_model_config = get_model_config(dataset_name, model_type)
     except ValueError:
-        from config.settings import DATASET_MODEL_CONFIGS
-        dataset_model_config = DATASET_MODEL_CONFIGS.get(dataset_name, {}).get(model_type, {})
+        from config.settings import DATASET_MODEL_CONFIGS, MODEL_FIT_MODE
+        fit_configs = DATASET_MODEL_CONFIGS.get(dataset_name, {})
+        normal_config = fit_configs.get(MODEL_FIT_MODE, fit_configs.get('normal', {}))
+        dataset_model_config = normal_config.get(model_type, {}) if isinstance(normal_config, dict) else {}
     for key, value in dataset_model_config.items():
         if key not in model_params or key in ['learning_rate', 'num_leaves', 'max_depth', 'iterations', 'n_estimators', 'layers', 'dropout']:
             model_params[key] = value
@@ -165,7 +176,7 @@ def run_removal_experiments(
         n_classes_expected = int(y_train.nunique())
 
     # Baseline один раз
-    history_baseline, _ = runner.train_and_evaluate(
+    history_baseline, _, _ = runner.train_and_evaluate(
         preprocessor, model_params, X_train, y_train, X_test, y_test, X_val, y_val, n_epochs
     )
     results["orig"] = history_baseline
@@ -186,7 +197,7 @@ def run_removal_experiments(
                 y_sub = y_train.iloc[keep_mask]
                 if len(X_sub) < 10 or (n_classes_expected is not None and y_sub.nunique() < n_classes_expected):
                     continue
-                history, _ = runner.train_and_evaluate(
+                history, _, _ = runner.train_and_evaluate(
                     preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs
                 )
                 results[f"{plot_method}_{pct}pct"] = history
@@ -204,7 +215,7 @@ def run_removal_experiments(
                 y_sub = y_train.iloc[keep_mask]
                 if len(X_sub) < 10 or (n_classes_expected is not None and y_sub.nunique() < n_classes_expected):
                     continue
-                history, _ = runner.train_and_evaluate(
+                history, _, _ = runner.train_and_evaluate(
                     preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs
                 )
                 results[f"{plot_method}_{pct}pct"] = history
@@ -224,7 +235,7 @@ def run_removal_experiments(
                 y_sub = y_train.iloc[keep_mask]
                 if len(X_sub) < 10 or (n_classes_expected is not None and y_sub.nunique() < n_classes_expected):
                     continue
-                history, _ = runner.train_and_evaluate(
+                history, _, _ = runner.train_and_evaluate(
                     preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs
                 )
                 results[f"{plot_method}_{pct}pct"] = history
@@ -252,7 +263,7 @@ def run_removal_experiments(
                 y_sub = y_train.iloc[keep_mask]
                 if len(X_sub) < 10 or (n_classes_expected is not None and y_sub.nunique() < n_classes_expected):
                     continue
-                history, _ = runner.train_and_evaluate(
+                history, _, _ = runner.train_and_evaluate(
                     preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs
                 )
                 results[f"{plot_method}_{pct}pct"] = history
@@ -284,7 +295,7 @@ def run_removal_experiments(
                 y_sub = y_train.iloc[keep_mask]
                 if len(X_sub) < 10 or (n_classes_expected is not None and y_sub.nunique() < n_classes_expected):
                     continue
-                history, _ = runner.train_and_evaluate(
+                history, _, _ = runner.train_and_evaluate(
                     preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs
                 )
                 results[f"{plot_method}_{pct}pct"] = history
@@ -324,7 +335,7 @@ def run_removal_experiments(
                 y_sub = y_train.iloc[keep_mask]
                 if len(X_sub) < 10 or (n_classes_expected is not None and y_sub.nunique() < n_classes_expected):
                     continue
-                history, _ = runner.train_and_evaluate(
+                history, _, _ = runner.train_and_evaluate(
                     preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs
                 )
                 results[f"{plot_method}_{pct}pct"] = history
@@ -355,7 +366,7 @@ def run_removal_experiments(
                 y_sub = y_train.iloc[keep_mask]
                 if len(X_sub) < 10 or (n_classes_expected is not None and y_sub.nunique() < n_classes_expected):
                     continue
-                history, _ = runner.train_and_evaluate(
+                history, _, _ = runner.train_and_evaluate(
                     preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs
                 )
                 results[f"{plot_method}_{pct}pct"] = history
@@ -374,7 +385,7 @@ def run_removal_experiments(
                 y_sub = y_train.iloc[keep_mask]
                 if len(X_sub) < 10 or (n_classes_expected is not None and y_sub.nunique() < n_classes_expected):
                     continue
-                history, _ = runner.train_and_evaluate(
+                history, _, _ = runner.train_and_evaluate(
                     preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs
                 )
                 if pct not in random_run_results:

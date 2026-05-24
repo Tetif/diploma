@@ -46,7 +46,8 @@ class LightGBMModel(BaseModel):
         lightgbm_keys = {
             'objective', 'metric', 'num_leaves', 'learning_rate', 'feature_fraction',
             'bagging_fraction', 'bagging_freq', 'min_data_in_leaf', 'verbose', 'n_jobs',
-            'random_state', 'max_depth', 'subsample', 'colsample_bytree', 'num_class'
+            'random_state', 'max_depth', 'subsample', 'colsample_bytree', 'num_class',
+            'n_estimators',
         }
         for key in lightgbm_keys:
             if key in kwargs:
@@ -55,26 +56,45 @@ class LightGBMModel(BaseModel):
     def fit(self, X, y, X_val=None, y_val=None, **kwargs):
         train_data = lgb.Dataset(X, label=y)
 
+        # n_estimators from config overrides the default num_boost_round
+        num_boost_round = self.params.get('n_estimators') or kwargs.get('epochs', 1000)
+        # Exclude n_estimators from native lgb.train params to avoid conflict
+        train_params = {k: v for k, v in self.params.items() if k != 'n_estimators'}
+
         if X_val is not None and y_val is not None:
             valid_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
             self.model = lgb.train(
-                self.params,
+                train_params,
                 train_data,
-                num_boost_round=kwargs.get('epochs', 1000),
+                num_boost_round=num_boost_round,
                 valid_sets=[valid_data],
                 callbacks=[lgb.early_stopping(50, verbose=False)]
             )
         else:
             self.model = lgb.train(
-                self.params,
+                train_params,
                 train_data,
-                num_boost_round=kwargs.get('epochs', 1000),
+                num_boost_round=num_boost_round,
                 callbacks=None
             )
         return 0.0
 
     def predict(self, X):
         return self.model.predict(X)
+
+    def predict_proba(self, X):
+        """Вероятности классов (как у sklearn); нужно для дистилляции и метрик."""
+        if self.task_type not in CLASSIFICATION_TASKS:
+            raise AttributeError("predict_proba is only defined for classification tasks")
+        p = np.asarray(self.model.predict(X), dtype=np.float64)
+        if self.task_type == 'binary_classification':
+            p1 = np.clip(p.reshape(-1), 0.0, 1.0)
+            return np.column_stack([1.0 - p1, p1])
+        if p.ndim != 2:
+            raise ValueError(
+                f"LightGBM multiclass predict_proba expected shape (N, C), got {p.shape}"
+            )
+        return p
 
     def get_params(self, deep=True):
         """Возвращает параметры модели (совместимость с sklearn)"""
@@ -98,7 +118,7 @@ class XGBoostModel(BaseModel):
         xgboost_keys = {
             'objective', 'eval_metric', 'max_depth', 'learning_rate', 'subsample',
             'colsample_bytree', 'min_child_weight', 'gamma', 'random_state', 'n_jobs',
-            'num_class'
+            'num_class', 'n_estimators',
         }
         for key in xgboost_keys:
             if key in kwargs:

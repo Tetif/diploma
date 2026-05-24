@@ -1,4 +1,4 @@
-"""Storage for experiment results and influence weights"""
+"""Файловое хранилище результатов экспериментов и весов influence."""
 import json
 import pickle
 import numpy as np
@@ -9,7 +9,7 @@ import shutil
 
 
 class InfluenceWeightsStorage:
-    """Manages storage and retrieval of influence weights"""
+    """Сохранение и загрузка артефактов эксперимента."""
     
     def __init__(self, base_path: str = "microservice_storage"):
         self.base_path = Path(base_path)
@@ -20,35 +20,28 @@ class InfluenceWeightsStorage:
     def save_experiment(self, experiment_id: str, config: Dict[str, Any], 
                        results: Dict[str, Any], influence_weights: Dict[str, Any],
                        scores_raw: Dict[str, Any], metadata: Dict[str, Any] = None) -> str:
-        """Save experiment results and weights"""
-        
+        """Сохраняет конфиг, результаты, веса и метаданные."""
         exp_dir = self.experiments_dir / experiment_id
         exp_dir.mkdir(exist_ok=True)
-        
-        # Save configuration
+
         config_path = exp_dir / "config.json"
         with open(config_path, 'w') as f:
-            # Convert enums and non-serializable objects
             config_copy = self._prepare_for_json(config)
             json.dump(config_copy, f, indent=2, default=str)
-        
-        # Save results
+
         results_path = exp_dir / "results.json"
         with open(results_path, 'w') as f:
             results_copy = self._prepare_for_json(results)
             json.dump(results_copy, f, indent=2, default=str)
-        
-        # Save influence weights (binary format for numpy arrays)
+
         weights_path = exp_dir / "influence_weights.pkl"
         with open(weights_path, 'wb') as f:
             pickle.dump(influence_weights, f)
-        
-        # Save scores_raw
+
         scores_path = exp_dir / "scores_raw.pkl"
         with open(scores_path, 'wb') as f:
             pickle.dump(scores_raw, f)
-        
-        # Save metadata
+
         if metadata is None:
             metadata = {}
         metadata['created_at'] = datetime.now().isoformat()
@@ -60,30 +53,24 @@ class InfluenceWeightsStorage:
         return str(exp_dir)
     
     def load_experiment(self, experiment_id: str) -> Optional[Dict[str, Any]]:
-        """Load experiment results and weights"""
-        
+        """Загружает сохранённый эксперимент или None."""
         exp_dir = self.experiments_dir / experiment_id
         if not exp_dir.exists():
             return None
-        
+
         try:
-            # Load config
             with open(exp_dir / "config.json", 'r') as f:
                 config = json.load(f)
-            
-            # Load results
+
             with open(exp_dir / "results.json", 'r') as f:
                 results = json.load(f)
-            
-            # Load influence weights
+
             with open(exp_dir / "influence_weights.pkl", 'rb') as f:
                 influence_weights = pickle.load(f)
-            
-            # Load scores_raw
+
             with open(exp_dir / "scores_raw.pkl", 'rb') as f:
                 scores_raw = pickle.load(f)
-            
-            # Load metadata
+
             with open(exp_dir / "metadata.json", 'r') as f:
                 metadata = json.load(f)
             
@@ -134,13 +121,45 @@ class InfluenceWeightsStorage:
                             metadata = json.load(f)
                         with open(config_path, 'r') as f:
                             config = json.load(f)
-                        
+
+                        mr = config.get("model_run_config") or {}
+                        if not isinstance(mr, dict):
+                            mr = {}
+                        rpc = mr.get("removal_per_class")
+                        if rpc is None:
+                            rpc = config.get("removal_per_class")
+                        if rpc is None:
+                            mrc = config.get("MODEL_RUN_CONFIG")
+                            if isinstance(mrc, dict):
+                                rpc = mrc.get("removal_per_class")
+                        removal_per_class = bool(rpc) if rpc is not None else False
+                        rst = mr.get("removal_stratify_target")
+                        if rst is None:
+                            rst = config.get("removal_stratify_target")
+                        if rst is None:
+                            _mrc_rst = config.get("MODEL_RUN_CONFIG")
+                            if isinstance(_mrc_rst, dict):
+                                rst = _mrc_rst.get("removal_stratify_target")
+                        removal_stratify_target = bool(rst) if rst is not None else False
+                        removal_adaptive_model = bool(
+                            config.get("removal_adaptive_model", False)
+                        )
+
                         experiments.append({
                             'experiment_id': exp_dir.name,
                             'created_at': metadata.get('created_at'),
                             'dataset': config.get('dataset_name'),
                             'model': config.get('model_type'),
-                            'status': metadata.get('status', 'unknown')
+                            'sample_size_percentage': config.get(
+                                'sample_size_percentage'
+                            ),
+                            'status': metadata.get('status', 'unknown'),
+                            'experiment_kind': config.get('experiment_kind'),
+                            'parent_experiment_id': config.get('parent_experiment_id'),
+                            'run_mode': config.get('run_mode'),
+                            'removal_adaptive_model': removal_adaptive_model,
+                            'removal_per_class': removal_per_class,
+                            'removal_stratify_target': removal_stratify_target,
                         })
                     except Exception as e:
                         print(f"Error reading experiment {exp_dir.name}: {e}")

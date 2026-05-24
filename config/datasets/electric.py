@@ -33,6 +33,7 @@ class ElectricConfig(BaseDatasetConfig):
     val_size = 0.1
     random_state = 39
     stratify = False
+    use_time_split = True
 
     metrics = ['mae', 'rmse', 'r2']
 
@@ -53,6 +54,8 @@ class ElectricConfig(BaseDatasetConfig):
             low_memory=False
         )
         df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+        df = df.dropna(subset=['datetime'])
+        df = df.sort_values('datetime', ignore_index=True)
         df['hour'] = df['datetime'].dt.hour
         df['day_of_week'] = df['datetime'].dt.dayofweek
         df['month'] = df['datetime'].dt.month

@@ -40,6 +40,7 @@ from utils.helpers import set_random_seeds, sample_data  # type: ignore
 from visualization.plots import (  # type: ignore
     save_removal_metrics_csv,
     plot_results_enhanced,
+    plot_method_comparison_bars,
 )
 
 
@@ -144,24 +145,26 @@ def _prepare_data_for_study(
             le = LabelEncoder()
             y = pd.Series(le.fit_transform(y), index=y.index)
 
-    from sklearn.model_selection import train_test_split
+    from utils.helpers import split_data
 
-    X_temp, X_val, y_temp, y_val = train_test_split(
+    X_temp, X_val, y_temp, y_val = split_data(
         X,
         y,
         test_size=cfg.val_size,
         random_state=RANDOM_STATE,
         stratify=y if cfg.stratify else None,
+        time_series=cfg.use_time_split,
     )
 
     eff_fraction = _effective_sample_fraction(sample_fraction)
-    X_sample, y_sample = sample_data(X_temp, y_temp, sample_fraction=eff_fraction)
+    X_sample, y_sample = sample_data(X_temp, y_temp, sample_fraction=eff_fraction, preserve_order=cfg.use_time_split)
 
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train, X_test, y_train, y_test = split_data(
         X_sample,
         y_sample,
         test_size=EXPERIMENT_CONFIG["test_size"],
         random_state=RANDOM_STATE,
+        time_series=cfg.use_time_split,
     )
 
     preprocessor = PreprocessorFactory.create(dataset_config, logger=None)
@@ -240,7 +243,7 @@ def _compute_influence_weights(
     Обучает базовую модель и считает influence-веса с помощью InfluenceMethods.
     Возвращает (scores, scores_raw).
     """
-    history, model = runner.train_and_evaluate(
+    history, model, _ = runner.train_and_evaluate(
         preprocessor,
         model_params,
         X_train,
@@ -443,6 +446,7 @@ def _run_single_study_config(
     save_removal_metrics_csv(results, n_remove_list, removal_csv_path)
 
     plot_results_enhanced(results, n_remove_list, logger=logger, random_run_results=random_run_results)
+    plot_method_comparison_bars(logger, results, n_remove_list)
 
     duration = time.time() - start_time
     with master_log_path.open("a", encoding="utf-8") as ml:

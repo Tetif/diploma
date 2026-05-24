@@ -47,11 +47,16 @@ class BaseDatasetConfig(ABC):
     # ===== ПАРАМЕТРЫ РАЗДЕЛЕНИЯ =====
     test_size: float = 0.2  # Размер тестового множества
     val_size: float = 0.1  # Размер валидационного множества
-    random_state: int = 39
+    random_state: int = 42
     stratify: bool = False  # Стратифицированное разделение (для классификации)
+    use_time_split: bool = False  # Использовать хронологическое разделение для временных рядов
 
     # ===== МЕТРИКИ =====
     metrics: List[str]  # Метрики для оценки
+
+    # ===== ЛОГИ ЭКСПЕРИМЕНТА =====
+    # None — использовать EXPERIMENT_CONFIG['show_top_bottom_influence']; 0 — отключить (напр. широкий TF-IDF).
+    show_top_bottom_influence: Optional[int] = None
 
     # ===== КОНФИГУРАЦИЯ ПРЕДОБРАБОТКИ =====
     preprocessing_config: PreprocessingConfig

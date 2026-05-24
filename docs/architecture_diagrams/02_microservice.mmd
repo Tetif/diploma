@@ -1,0 +1,19 @@
+flowchart LR
+    subgraph client [Клиент]
+        user["Пользователь"]
+        ui["Веб-интерфейс"]
+    end
+
+    subgraph server [Сервер]
+        api["REST API"]
+        worker["Выполнение экспериментов\nпоэтапный сценарий"]
+    end
+
+    subgraph store [Хранение]
+        files["Артефакты экспериментов\nвеса влияния, логи"]
+    end
+
+    user --> ui
+    ui -->|"HTTP"| api
+    api --> worker
+    worker --> files

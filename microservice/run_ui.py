@@ -1,16 +1,15 @@
 #!/usr/bin/env python
-"""Start only Streamlit interface"""
+"""Запуск только интерфейса Streamlit."""
 import subprocess
 import sys
 from pathlib import Path
 
 if __name__ == "__main__":
     microservice_dir = Path(__file__).parent
-    
-    print("🎨 Starting Streamlit interface...")
-    print("  URL: http://localhost:8501")
-    print("\nMake sure FastAPI is running on localhost:8000!")
-    print("Press Ctrl+C to stop...\n")
+
+    print("Streamlit: http://localhost:8501")
+    print("Убедитесь, что API доступен на http://localhost:8000")
+    print("Остановка: Ctrl+C\n")
     
     subprocess.run(
         [sys.executable, "-m", "streamlit", "run", "app.py", "--server.port", "8501"],

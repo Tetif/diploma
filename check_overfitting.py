@@ -12,7 +12,6 @@ import argparse
 import sys
 from pathlib import Path
 
-# Добавляем корень проекта в путь
 project_root = Path(__file__).resolve().parent
 sys.path.insert(0, str(project_root))
 
@@ -20,6 +19,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from utils.helpers import split_data
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
@@ -32,8 +32,6 @@ from sklearn.metrics import (
 )
 from sklearn.preprocessing import StandardScaler
 
-import torch
-import torch.nn as nn
 import lightgbm as lgb
 import xgboost as xgb
 import catboost as cb
@@ -44,18 +42,19 @@ from config.settings import (
     RANDOM_STATE,
     get_model_config,
     DATASET_MODEL_CONFIGS,
+    MODEL_FIT_MODE,
     DEVICE,
 )
 from data.loader import DataLoaderFactory
 from data.preprocessing import PreprocessorFactory
-from models.torch_models import PyTorchModelWrapper, SimpleNN, ImprovedNN, SimpleFTTransformer
+from models.torch_models import PyTorchModelWrapper
 from utils.helpers import set_random_seeds
 
 
 # ============== НАСТРОЙКИ (можно менять) ==============
 DEFAULT_DATASET = "adult"
 DEFAULT_MODEL = "lightgbm"
-DEFAULT_ARCHITECTURE = "simple"  # для pytorch: simple, improved, ft_transformer, ft_transformer_simple
+DEFAULT_ARCHITECTURE = "simple"  # для pytorch: simple, improved, ft_transformer, ft_transformer_simple, cnn_small
 TEST_SIZE = 0.2
 N_EPOCHS_PYTORCH = 300
 N_EPOCHS_PYTORCH_ZILLOW = 500  # Больше эпох для сложной задачи Zillow
@@ -74,7 +73,8 @@ def get_available_models(dataset_name):
     """Получить список доступных моделей для датасета."""
     if dataset_name not in DATASET_MODEL_CONFIGS:
         return []
-    config = DATASET_MODEL_CONFIGS[dataset_name]
+    fit_configs = DATASET_MODEL_CONFIGS[dataset_name]
+    config = fit_configs.get(MODEL_FIT_MODE, fit_configs.get('normal', {}))
     models = []
     for key in config.keys():
         if key == "pytorch":
@@ -148,18 +148,16 @@ def fit_and_predict_tree(model, X_train, y_train, X_test, task_type, X_val=None,
 
 def fit_and_predict_pytorch(model, X_train, y_train, X_test, task_type, n_epochs=200):
     """Обучение PyTorch модели и предсказание."""
-    X_t = torch.FloatTensor(X_train).to(DEVICE)
-    y_t = torch.FloatTensor(y_train).reshape(-1, 1).to(DEVICE)
-
-    model.model.train()
     for _ in range(n_epochs):
-        model.optimizer.zero_grad()
-        out = model.model(X_t)
-        loss = model.criterion(out, y_t)
-        loss.backward()
-        model.optimizer.step()
-
-    return model.predict(X_train), model.predict(X_test), None, None
+        model.fit(X_train, y_train, epochs=1)
+    y_proba_train, y_proba_test = None, None
+    if task_type == "multiclass_classification" and hasattr(model, "predict_proba"):
+        try:
+            y_proba_train = model.predict_proba(X_train)
+            y_proba_test = model.predict_proba(X_test)
+        except AttributeError:
+            pass
+    return model.predict(X_train), model.predict(X_test), y_proba_train, y_proba_test
 
 
 def compute_metrics(y_true, y_pred, y_proba, task_type):
@@ -171,11 +169,12 @@ def compute_metrics(y_true, y_pred, y_proba, task_type):
             "R2": r2_score(y_true, y_pred),
         }
     else:
+        avg = "binary" if task_type == "binary_classification" else "weighted"
         metrics = {
             "Accuracy": accuracy_score(y_true, y_pred),
-            "F1": f1_score(y_true, y_pred, average="binary" if task_type == "binary_classification" else "weighted", zero_division=0),
-            "Precision": precision_score(y_true, y_pred, average="binary", zero_division=0),
-            "Recall": recall_score(y_true, y_pred, average="binary", zero_division=0),
+            "F1": f1_score(y_true, y_pred, average=avg, zero_division=0),
+            "Precision": precision_score(y_true, y_pred, average=avg, zero_division=0),
+            "Recall": recall_score(y_true, y_pred, average=avg, zero_division=0),
         }
         if y_proba is not None and len(np.unique(y_true)) == 2:
             try:
@@ -214,11 +213,13 @@ def check_overfitting(
             y = pd.Series(le.fit_transform(y), index=y.index)
 
     # Разделение на train/test
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y,
+    X_train, X_test, y_train, y_test = split_data(
+        X,
+        y,
         test_size=test_size,
         random_state=RANDOM_STATE,
         stratify=y if cfg.stratify else None,
+        time_series=cfg.use_time_split,
     )
 
     # Предобработка
@@ -253,6 +254,8 @@ def check_overfitting(
         model_params = dataset_model_config.get(arch, dataset_model_config.get("simple", {}))
         full_model_name = f"pytorch_{arch}"
         model_params["task_type"] = task_type
+        if task_type == "multiclass_classification":
+            model_params["num_classes"] = int(len(np.unique(y_train.values)))
         if task_type == "binary_classification":
             n_neg = (y_train.values == 0).sum()
             n_pos = (y_train.values == 1).sum()
@@ -285,12 +288,15 @@ def check_overfitting(
             model, X_train_processed, y_train.values, X_test_processed, task_type
         )
 
-    # Для PyTorch классификации: модель возвращает вероятности, переводим в классы
-    if model_type == "pytorch" and task_type in ["binary_classification", "multiclass_classification"]:
+    # Для PyTorch классификации: бинарь — порог по вероятностям; мультикласс — argmax по логитам
+    if model_type == "pytorch" and task_type == "binary_classification":
         y_proba_train = np.array(y_pred_train).flatten()
         y_proba_test = np.array(y_pred_test).flatten()
         y_pred_train = (y_proba_train > 0.5).astype(int)
         y_pred_test = (y_proba_test > 0.5).astype(int)
+    elif model_type == "pytorch" and task_type == "multiclass_classification":
+        y_pred_train = np.argmax(np.asarray(y_pred_train), axis=1).astype(int)
+        y_pred_test = np.argmax(np.asarray(y_pred_test), axis=1).astype(int)
 
     # Метрики
     train_metrics = compute_metrics(

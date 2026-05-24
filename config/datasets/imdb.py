@@ -31,9 +31,14 @@ class ImdbConfig(BaseDatasetConfig):
 
     metrics = ['accuracy', 'f1', 'roc_auc', 'precision', 'recall']
 
+    # Широкая разреженная матрица TF-IDF: log_top_bottom_influence непомерно тяжёлый
+    show_top_bottom_influence = 0
+
     # Ограничение выборки и размер словаря TF-IDF
     max_samples = 25000
     tfidf_max_features = 2000
+    use_tfidf_lsa = False
+    lsa_n_components = 200
 
     def __init__(self):
         super().__init__()
@@ -43,6 +48,7 @@ class ImdbConfig(BaseDatasetConfig):
 
     def load_data(self) -> Tuple[pd.DataFrame, pd.Series]:
         """Загрузить IMDB, векторизовать отзывы через TF-IDF в таблицу признаков."""
+        from sklearn.decomposition import TruncatedSVD
         from sklearn.feature_extraction.text import TfidfVectorizer
 
         df = pd.read_csv(self.data_path + 'IMDB Dataset.csv')
@@ -56,8 +62,17 @@ class ImdbConfig(BaseDatasetConfig):
 
         vectorizer = TfidfVectorizer(max_features=self.tfidf_max_features, stop_words='english', sublinear_tf=True)
         X = vectorizer.fit_transform(texts)
-        feature_names = [f'tfidf_{i}' for i in range(X.shape[1])]
-        X_df = pd.DataFrame.sparse.from_spmatrix(X, columns=feature_names)
+
+        if self.use_tfidf_lsa:
+            n_components = min(self.lsa_n_components, X.shape[1])
+            if n_components <= 0:
+                raise ValueError('lsa_n_components must be positive')
+            X = TruncatedSVD(n_components=n_components, random_state=self.random_state).fit_transform(X)
+            feature_names = [f'lsa_{i}' for i in range(X.shape[1])]
+            X_df = pd.DataFrame(X, columns=feature_names)
+        else:
+            feature_names = [f'tfidf_{i}' for i in range(X.shape[1])]
+            X_df = pd.DataFrame.sparse.from_spmatrix(X, columns=feature_names)
 
         self.numeric_columns = feature_names
         target = pd.Series(y_raw.values, name=self.target_column, index=X_df.index)

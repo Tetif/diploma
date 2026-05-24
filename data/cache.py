@@ -53,14 +53,14 @@ class DataCache:
                     pickle.dump(metadata, f)
 
             if self.logger:
-                self.logger.log_message(f"💾 Data cached: {cache_key[:8]}...")
+                self.logger.log_message(f"Кэш сохранён: {cache_key[:8]}...")
             else:
                 debug_print(f"Data cached: {cache_key[:8]}...")
 
             return True
         except Exception as e:
             if self.logger:
-                self.logger.log_message(f"⚠️ Failed to save cache: {e}")
+                self.logger.log_message(f"Ошибка сохранения кэша: {e}")
             else:
                 debug_print(f"Failed to save cache: {e}")
             return False
@@ -89,14 +89,14 @@ class DataCache:
                     metadata = pickle.load(f)
 
             if self.logger:
-                self.logger.log_message(f"📂 Data loaded from cache: {cache_key[:8]}...")
+                self.logger.log_message(f"Данные из кэша: {cache_key[:8]}...")
             else:
                 debug_print(f"Data loaded from cache: {cache_key[:8]}...")
 
             return X, y, metadata
         except Exception as e:
             if self.logger:
-                self.logger.log_message(f"⚠️ Failed to load cache: {e}")
+                self.logger.log_message(f"Ошибка загрузки кэша: {e}")
             else:
                 debug_print(f"Failed to load cache: {e}")
             return None, None, None
@@ -112,13 +112,13 @@ class DataCache:
             for file in self.cache_dir.glob("preprocessed_*.pkl"):
                 file.unlink()
             if self.logger:
-                self.logger.log_message("🗑️ Cache cleared")
+                self.logger.log_message("Кэш очищен")
             else:
                 debug_print("Cache cleared")
             return True
         except Exception as e:
             if self.logger:
-                self.logger.log_message(f"⚠️ Failed to clear cache: {e}")
+                self.logger.log_message(f"Ошибка очистки кэша: {e}")
             else:
                 debug_print(f"Failed to clear cache: {e}")
             return False

@@ -2,7 +2,20 @@ import torch
 
 # ===== ВЫБОР ДАТАСЕТА =====
 # Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine', 'covertype', 'electric', 'mnist', 'imdb', 'cifar10'
-CURRENT_DATASET = 'electric'
+CURRENT_DATASET = 'zillow'
+
+# ===== РЕЖИМ ОБУЧЕНИЯ (FIT MODE) =====
+# 'normal'   — оптимальные гиперпараметры (по умолчанию)
+# 'underfit' — намеренно слабая модель (мало ёмкости / мало эпох)
+# 'overfit'  — намеренно переобученная модель (избыточная ёмкость / много эпох)
+MODEL_FIT_MODE = 'normal'
+
+# Переопределение числа эпох для PyTorch/дистилляции в режимах underfit/overfit.
+# В режиме 'normal' используется EXPERIMENT_CONFIG['n_epochs'].
+FIT_MODE_EPOCHS = {
+    'underfit': 10,
+    'overfit': 5000,
+}
 
 # Глобальные флаги для отладки
 DEBUG_MODE = False
@@ -17,19 +30,25 @@ RANDOM_STATE = 42
 
 # Модель и стратегии удаления для main/экспериментов (единая точка настройки)
 MODEL_RUN_CONFIG = {
-    'model_type': 'xgboost',  # lightgbm, xgboost, random_forest, pytorch, catboost
-    'model_architecture': 'simple',  # для pytorch: simple, improved, ft_transformer
+    'model_type': 'pytorch',  # lightgbm, xgboost, random_forest, pytorch, catboost
+    'model_architecture': 'simple',  # pytorch: simple, improved, ft_transformer, ft_transformer_simple, cnn_small
     # Стратегии удаления для анализа influence-весов и вспомогательных скриптов.
     'removal_strategies': [
-        "lowest",
+        # "lowest",
         # "highest",
         "random",
-        # "extremes",
+        "extremes",
         # "median",
         # "few_bad_then_random",
         # "few_median_then_random",
         # "few_good_then_random",
     ],
+    # Классификация (binary / multiclass): True — доля удалений и ранжирование
+    # influence (и loss-baseline) отдельно внутри каждого класса; False — глобально по всей train-выборке.
+    'removal_per_class': False,
+    # Регрессия: True — то же по квантильным стратам целевой переменной (равные частоты по y).
+    'removal_stratify_target': False,
+    'removal_stratify_n_bins': 10,
 }
 
 # Методы влияния/valuation: какие считаются при запуске (influence/methods.py)
@@ -37,11 +56,11 @@ MODEL_RUN_CONFIG = {
 # influence_methods: для PyTorch — Influence, ArnoldiInfluence, CgInfluence, LissaInfluence, NystroemSketchInfluence
 INFLUENCE_METHODS_CONFIG = {
     'valuation_methods': [
-        # 'LOO',
+        'LOO',
         # 'DataShapley',
         # 'BetaShapley',
         # 'Banzhaf',
-        # 'TMCShapley',
+        'TMCShapley',
         # 'KNNShapley',
         # 'DataOOB',
         # 'LeastCore'
@@ -62,15 +81,37 @@ EXPERIMENT_CONFIG = {
     'n_epochs': 500,
     'sample_size_percentage': 10,
     # Проценты удаления: (start, stop, num) для np.linspace — единый источник для main и вспомогательных скриптов
-    'n_remove_linspace': (1, 80, 9),
-    'n_random_runs': 3,
+    'n_remove_linspace': (1, 90, 10),
+    'n_random_runs': 1,
+    # Число переобучений PyTorch для каждой точки removal: берётся лучший из n запусков.
+    # Устраняет нестабильность из-за плохой инициализации ("kill bad runs").
+    # 1 = без повторов (старое поведение); 3 = хороший баланс качества и скорости.
+    'n_retrain_runs': 3,
     # Дополнительные baselines по loss. Оставьте только нужные:
     # loss_high = удалять сначала объекты с наибольшим loss
     # loss_low = удалять сначала объекты с наименьшим loss
     'loss_removal_methods': [
         'loss_high',
-        'loss_low'
+        # 'loss_low'
     ],
+    # CatBoost native object importance (LossFunctionChange).
+    # Если model_type='catboost' — использует обученную модель напрямую (без mismatch).
+    # Для других моделей — обучает proxy CatBoost для вычисления importance.
+    'use_catboost_influence': False,
+    # Показывать N примеров с наибольшими и наименьшими influence-весами в консоли и логах.
+    # False или 0 — отключено.
+    'show_top_bottom_influence': 10,
+}
+
+# Эвристика для removal_adaptive_model: снижение ёмкости модели на меньшем train.
+REMOVAL_ADAPTIVE_CONFIG = {
+    # Доля оставшихся примеров (len(X_sub) / len(X_train_full)): ниже порога PyTorch
+    # переключается на архитектуру simple (если в model_params есть ключ 'simple').
+    'keep_ratio_threshold': 0.5,
+    # Множитель ёмкости деревьев и ширины слоёв PyTorch MLP: max(min_scale, sqrt(keep_ratio)).
+    'min_scale': 0.3,
+    # Нижняя граница ширины скрытого слоя при adaptive (PyTorch simple/improved).
+    'pytorch_min_layer_width': 4,
 }
 
 # Стратегии удаления для анализа сохранённых influence-весов (scripts/plot_removal_from_weights.py)
@@ -204,7 +245,7 @@ DATASET_INFLUENCE_PARAMS = {
         'nystroem_params': {'rank': 15}
     },
     'electric': {
-        'regularization': 1e-05,
+        'regularization': 1e-06,
         'batch_size': 32,
         'influence_val_batch_size': 256,
         'lissa_params': {'scale': 15, 'damping': 0.2},
@@ -274,58 +315,100 @@ def get_metric_metadata(metric_name):
 
 
 # Оптимальные параметры для каждого датасета и модели
-from .datasets.adult_config import ADULT_CONFIG
-from .datasets.housing_config import HOUSING_CONFIG
-from .datasets.wine_config import WINE_CONFIG
-from .datasets.zillow_config import ZILLOW_CONFIG
-from .datasets.covertype_config import COVERTYPE_CONFIG
-from .datasets.electric_config import ELECTRIC_CONFIG
-from .datasets.mnist_config import MNIST_CONFIG
-from .datasets.imdb_config import IMDB_CONFIG
-from .datasets.cifar10_config import CIFAR10_CONFIG
+from .datasets.adult_config import ADULT_CONFIG, ADULT_UNDERFIT_CONFIG, ADULT_OVERFIT_CONFIG
+from .datasets.housing_config import HOUSING_CONFIG, HOUSING_UNDERFIT_CONFIG, HOUSING_OVERFIT_CONFIG
+from .datasets.wine_config import WINE_CONFIG, WINE_UNDERFIT_CONFIG, WINE_OVERFIT_CONFIG
+from .datasets.zillow_config import ZILLOW_CONFIG, ZILLOW_UNDERFIT_CONFIG, ZILLOW_OVERFIT_CONFIG
+from .datasets.covertype_config import COVERTYPE_CONFIG, COVERTYPE_UNDERFIT_CONFIG, COVERTYPE_OVERFIT_CONFIG
+from .datasets.electric_config import ELECTRIC_CONFIG, ELECTRIC_UNDERFIT_CONFIG, ELECTRIC_OVERFIT_CONFIG
+from .datasets.mnist_config import MNIST_CONFIG, MNIST_UNDERFIT_CONFIG, MNIST_OVERFIT_CONFIG
+from .datasets.imdb_config import IMDB_CONFIG, IMDB_UNDERFIT_CONFIG, IMDB_OVERFIT_CONFIG
+from .datasets.cifar10_config import CIFAR10_CONFIG, CIFAR10_UNDERFIT_CONFIG, CIFAR10_OVERFIT_CONFIG
 
 DATASET_MODEL_CONFIGS = {
-    'adult': ADULT_CONFIG,
-    'housing': HOUSING_CONFIG,
-    'wine': WINE_CONFIG,
-    'zillow': ZILLOW_CONFIG,
-    'covertype': COVERTYPE_CONFIG,
-    'electric': ELECTRIC_CONFIG,
-    'mnist': MNIST_CONFIG,
-    'imdb': IMDB_CONFIG,
-    'cifar10': CIFAR10_CONFIG,
+    'adult': {
+        'normal': ADULT_CONFIG,
+        'underfit': ADULT_UNDERFIT_CONFIG,
+        'overfit': ADULT_OVERFIT_CONFIG,
+    },
+    'housing': {
+        'normal': HOUSING_CONFIG,
+        'underfit': HOUSING_UNDERFIT_CONFIG,
+        'overfit': HOUSING_OVERFIT_CONFIG,
+    },
+    'wine': {
+        'normal': WINE_CONFIG,
+        'underfit': WINE_UNDERFIT_CONFIG,
+        'overfit': WINE_OVERFIT_CONFIG,
+    },
+    'zillow': {
+        'normal': ZILLOW_CONFIG,
+        'underfit': ZILLOW_UNDERFIT_CONFIG,
+        'overfit': ZILLOW_OVERFIT_CONFIG,
+    },
+    'covertype': {
+        'normal': COVERTYPE_CONFIG,
+        'underfit': COVERTYPE_UNDERFIT_CONFIG,
+        'overfit': COVERTYPE_OVERFIT_CONFIG,
+    },
+    'electric': {
+        'normal': ELECTRIC_CONFIG,
+        'underfit': ELECTRIC_UNDERFIT_CONFIG,
+        'overfit': ELECTRIC_OVERFIT_CONFIG,
+    },
+    'mnist': {
+        'normal': MNIST_CONFIG,
+        'underfit': MNIST_UNDERFIT_CONFIG,
+        'overfit': MNIST_OVERFIT_CONFIG,
+    },
+    'imdb': {
+        'normal': IMDB_CONFIG,
+        'underfit': IMDB_UNDERFIT_CONFIG,
+        'overfit': IMDB_OVERFIT_CONFIG,
+    },
+    'cifar10': {
+        'normal': CIFAR10_CONFIG,
+        'underfit': CIFAR10_UNDERFIT_CONFIG,
+        'overfit': CIFAR10_OVERFIT_CONFIG,
+    },
 }
 
 # Функция для получения конфигов модели для конкретного датасета
 def get_model_config(dataset_name, model_type):
     """
-    Получить конфигурацию модели для конкретного датасета.
+    Получить конфигурацию модели для конкретного датасета с учётом MODEL_FIT_MODE.
 
     Args:
-        dataset_name (str): Имя датасета ('adult', 'housing', 'wine', 'zillow')
+        dataset_name (str): Имя датасета ('adult', 'housing', 'wine', 'zillow', ...)
         model_type (str): Тип модели ('lightgbm', 'xgboost', 'catboost', 'random_forest', 'pytorch')
 
     Returns:
-        dict: Конфигурация модели для данного датасета
+        dict: Конфигурация модели для данного датасета и текущего fit-режима
     """
     if dataset_name not in DATASET_MODEL_CONFIGS:
         raise ValueError(
             f"Unknown dataset: {dataset_name}. Available: {list(DATASET_MODEL_CONFIGS.keys())}"
         )
 
-    if model_type not in DATASET_MODEL_CONFIGS[dataset_name]:
-        raise ValueError(f"Unknown model type: {model_type}. Available: {list(DATASET_MODEL_CONFIGS[dataset_name].keys())}")
+    dataset_configs = DATASET_MODEL_CONFIGS[dataset_name]
+    fit_config = dataset_configs.get(MODEL_FIT_MODE, dataset_configs['normal'])
 
-    return DATASET_MODEL_CONFIGS[dataset_name][model_type].copy()
+    if model_type not in fit_config:
+        raise ValueError(
+            f"Unknown model type: {model_type}. "
+            f"Available: {list(fit_config.keys())}"
+        )
+
+    return fit_config[model_type].copy()
 
 
 MODEL_CONFIGS = DATASET_MODEL_CONFIGS
 
 # Настройки дистилляции
 DISTILLATION_CONFIG = {
-    'use_distillation': True,
+    'use_distillation': False,
     'distillation_epochs': 500,  # Количество эпох для дистилляции
-    'temperature': 2.0,  # Температура для дистилляции (пока не используется)
+    'temperature': 2.0,  # Температура для дистилляции
     'student_architecture': 'simple'  # Архитектура студенческой модели: 'simple' или 'improved'
 }
 
@@ -371,6 +454,8 @@ SYNTHETIC_DATA_CONFIG = {
 
 __all__ = [
     'CURRENT_DATASET',
+    'MODEL_FIT_MODE',
+    'FIT_MODE_EPOCHS',
     'MODEL_RUN_CONFIG',
     'INFLUENCE_METHODS_CONFIG',
     'METRIC_CONFIG',

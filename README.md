@@ -1,107 +1,148 @@
-# Инструкция по запуску
+# Система сравнения методов влияния данных (influence / data valuation)
+
+Дипломный проект: эмпирическое сравнение методов оценки важности обучающих точек ([pyDVL](https://pydvl.org/)) и анализ **кривых последовательного удаления** данных — как меняется качество модели при удалении объектов с наименьшим/наибольшим влиянием, случайно или по функции потерь.
+
+Поддерживаются **9 датасетов** (табличные, текст, изображения), модели на деревьях и PyTorch, **дистилляция** teacher→student, адаптивное переобучение при removal, CLI и **микросервис** (FastAPI + Streamlit).
+
+## Возможности
+
+- Методы valuation и influence через pyDVL (LOO, Shapley-варианты, Direct/LISSA/Nyström influence и др.)
+- Стратегии удаления: `lowest`, `highest`, `random`, `extremes`, комбинированные
+- Режимы подгонки модели: `normal` / `underfit` / `overfit`
+- Дистилляция: дерево → нейросеть для Hessian-based influence
+- Веб-интерфейс и REST API для запуска экспериментов и визуализации
+- Docker Compose для API и UI
 
 ## Требования
 
-1. **Установленные зависимости** (из `requirements.txt`):
-   ```bash
-   pip install -r requirements.txt
-   ```
-   
-   **Важно:** Если возникли ошибки импорта, убедитесь, что установлены все зависимости:
-   - `dask[complete]` - для распределенных вычислений (требуется для pydvl)
-   - `zarr` - для работы с массивами (требуется для pydvl.influence)
-   
-   Если нужно установить вручную:
-   ```bash
-   pip install "dask[complete]>=2023.1.0"
-   pip install "zarr>=3.0.0"
-   ```
+- Python 3.10+
+- CUDA опционально (PyTorch)
+- Зависимости: `pip install -r requirements.txt`
+- Для pyDVL influence также нужны `dask[complete]` и `zarr` (уже в requirements.txt)
 
-2. **Файлы данных** должны находиться в одном из мест:
-   - В папке `datasets/`:
-     - `properties_2016.csv`
-     - `train_2016_v2.csv`
-     - `sample_submission.csv`
-   - ИЛИ в корне проекта:
-     - `properties_2016.csv`
-     - `train_2016_v2.csv`
-     - `sample_submission.csv`
-
-## Запуск
-
-### Простой запуск (как оригинальный файл)
+## Быстрый старт
 
 ```bash
-python main.py
+git clone https://github.com/Tetif/diploma.git
+cd diploma
+python -m venv venv
+# Windows: venv\Scripts\activate
+# Linux/macOS: source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### Что делает код
+Данные для экспериментов — см. [datasets/README.md](datasets/README.md). Для проверки без скачивания больших файлов:
 
-Код выполняет те же действия, что и `zillow_main_new_models.py`:
-
-1. **Загружает данные** из CSV файлов
-2. **Предобрабатывает данные** (удаление пропусков, кодирование, нормализация)
-3. **Берет выборку** (0.1% от данных по умолчанию)
-4. **Обучает модель** (по умолчанию LightGBM)
-5. **Вычисляет influence scores** методами:
-   - LOO (Leave-One-Out)
-   - DataShapley
-   - BetaShapley
-   - Influence (для PyTorch моделей)
-6. **Проводит эксперименты** с удалением данных по influence scores
-7. **Визуализирует результаты** и сохраняет их
-
-### Настройка параметров
-
-Вы можете изменить параметры в `main.py`:
-
-```python
-# Тип модели (строка 116)
-model_params = {
-    'model_type': 'lightgbm',  # Варианты: lightgbm, xgboost, random_forest, pytorch, catboost
-    ...
-}
-
-# Размер выборки (строка 95)
-n = 0.001  # 0.1% от данных (измените на нужное значение)
-
-# Проценты удаления (строка 132)
-n_remove_list = np.linspace(2, 100, 50, dtype=int).tolist()  # От 2% до 100% с шагом ~2%
+```bash
+python main.py --dataset wine
 ```
 
-### Результаты
+## Конфигурация
 
-Все результаты сохраняются в папке `experiments/` со структурой:
+Основные настройки в [config/settings.py](config/settings.py):
+
+| Параметр | Описание |
+|----------|----------|
+| `CURRENT_DATASET` | Датасет по умолчанию (`wine`, `adult`, `zillow`, …) |
+| `MODEL_RUN_CONFIG` | Тип модели, стратегии removal |
+| `INFLUENCE_METHODS_CONFIG` | Какие методы pyDVL считать |
+| `EXPERIMENT_CONFIG` | Сплиты, доли удаления, эпохи |
+| `DEBUG_MODE` | Подробное логирование |
+
+CLI-переопределение датасета:
+
+```bash
+python main.py --dataset adult
 ```
-experiments/
-└── YYYY-MM-DD/
-    └── HH-MM-SS/
-        ├── experiment_log.txt      # Лог выполнения
-        ├── config.json              # Конфигурация эксперимента
-        ├── results.pkl              # Результаты в pickle формате
-        ├── experiment_summary.txt   # Итоговый отчет
-        └── *.png                    # Графики результатов
+
+## Датасеты
+
+| Имя | Тип | В репозитории |
+|-----|-----|---------------|
+| `wine` | регрессия | да |
+| `housing` | регрессия | да |
+| `adult` | бинарная классификация | да |
+| `zillow` | регрессия | частично (нужен `properties_2016.csv` с Kaggle) |
+| `covertype` | 7 классов | скачать |
+| `electric` | временной ряд | скачать |
+| `mnist` | изображения | скачать / auto |
+| `imdb` | текст | скачать |
+| `cifar10` | изображения | скачать / auto |
+
+Подробнее: [docs/DATASETS_OVERVIEW_RU.md](docs/DATASETS_OVERVIEW_RU.md).
+
+## Результаты экспериментов
+
+Артефакты сохраняются в `experiment_logs/YYYY-MM-DD/HH-MM-SS/`:
+
+```
+experiment_logs/
+└── 2026-05-19/
+    └── 12-27-10/
+        ├── experiment_log.txt
+        ├── config.json
+        ├── results.pkl
+        ├── experiment_summary.txt
+        └── *.png
 ```
 
-### Отличия от оригинального файла
+## Микросервис
 
-1. **Модульная структура** - код разбит на логические модули
-2. **Гибкая конфигурация** - настройки вынесены в `config/settings.py`
-3. **Автоматический поиск файлов** - код ищет файлы в `datasets/` или корне проекта
-4. **Улучшенное логирование** - все логи сохраняются в файлы
+```bash
+pip install -r microservice/requirements_microservice.txt
+python microservice/run_services.py
+```
 
-### Решение проблем
+- API: http://localhost:8000 (OpenAPI: `/docs`)
+- UI: http://localhost:8501
 
-**Ошибка: FileNotFoundError**
-- Убедитесь, что файлы данных находятся в правильной папке
-- Проверьте названия файлов (должны совпадать точно)
+Подробнее: [microservice/README.md](microservice/README.md).
 
-**Ошибка: ImportError или ModuleNotFoundError**
-- Установите все зависимости: `pip install -r requirements.txt`
-- Если ошибка связана с `distributed`: `pip install "dask[complete]>=2023.1.0"`
-- Убедитесь, что активировано виртуальное окружение
+### Docker
 
-**Ошибка: CUDA out of memory**
-- Уменьшите размер выборки (`n` в main.py)
-- Используйте CPU: установите `device='cpu'` в model_params
+```bash
+docker compose up --build
+```
 
+## Структура проекта
+
+```
+├── main.py                 # CLI: полный пайплайн эксперимента
+├── config/                 # settings.py, конфиги датасетов и моделей
+├── data/                   # загрузка, препроцессинг, кэш
+├── models/                 # деревья, PyTorch, дистилляция
+├── influence/              # pyDVL, расчёт scores
+├── experiments/            # ExperimentRunner, логирование
+├── visualization/          # графики и CSV метрик
+├── microservice/           # FastAPI + Streamlit
+├── scripts/                # утилиты (removal plots, агрегация)
+├── notebooks/              # EDA ноутбуки
+├── docs/                   # документация (RU)
+└── datasets/               # данные (см. datasets/README.md)
+```
+
+## Документация
+
+- [Обзор датасетов](docs/DATASETS_OVERVIEW_RU.md)
+- [Дистилляция](docs/DISTILLATION_DETAILED_RU.md)
+- [Архитектура (диаграммы)](docs/ARCHITECTURE_DIAGRAMS_RU.md)
+- [Быстрый старт микросервиса](QUICK_START_RU.md)
+
+## Решение проблем
+
+**FileNotFoundError при загрузке данных** — проверьте [datasets/README.md](datasets/README.md).
+
+**ImportError (dask, zarr, distributed)**:
+```bash
+pip install "dask[complete]>=2023.1.0" "zarr>=3.0.0"
+```
+
+**CUDA out of memory** — уменьшите выборку в `EXPERIMENT_CONFIG` или используйте CPU (`DEVICE = 'cpu'` в settings).
+
+## Лицензия
+
+MIT — см. [LICENSE](LICENSE).
+
+## Цитирование
+
+При использовании кода или идей проекта укажите pyDVL и источники данных (UCI, Kaggle Zillow Prize и т.д.).

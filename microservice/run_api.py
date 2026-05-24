@@ -1,20 +1,16 @@
 #!/usr/bin/env python
-"""Start only FastAPI server"""
+"""Запуск только FastAPI (uvicorn)."""
 import sys
 from pathlib import Path
 
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 if __name__ == "__main__":
     import uvicorn
-    
-    print("📡 Starting FastAPI server...")
-    print("  URL:  http://localhost:8000")
-    print("  Docs: http://localhost:8000/docs")
-    print("\nPress Ctrl+C to stop...\n")
-    
-    # Use import string for reload mode
+
+    print("FastAPI: http://localhost:8000")
+    print("Документация: http://localhost:8000/docs")
+    print("Остановка: Ctrl+C\n")
     uvicorn.run(
         "microservice.api:app",
         host="0.0.0.0",

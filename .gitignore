@@ -1,15 +1,56 @@
-/venv
-/datasets
-/zillow/zillow_main_new_models.py
-data_cache/
-*.pkl
+# Python / IDE
+venv/
+.venv/
 __pycache__/
 *.pyc
-/experiment_logs/
-/zillow
-/datasets/
-/catboost_info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+*.swp
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Data — ignore by default; small starter sets tracked via exceptions
+datasets/*
+!datasets/README.md
+!datasets/train_2016_v2.csv
+!datasets/zillow_data_dictionary.xlsx
+!datasets/adult/
+!datasets/wine/
+!datasets/housing/
+data_cache/
+
+# Experiment artifacts
+experiment_logs/
+visualization_results/
+microservice_storage/
+catboost_info/
+removal_plot_output/
+__distill_table_logs__/
+scripts/experiment_logs/
+
+# Generated outputs
+*.pkl
+*.log
+debug-*.log
+distillation_metrics_table_*
 overfitting_report.md
-docs/overfitting_causes_and_solutions.md
-docs/zillow_improvements.md
-/removal_plot_output/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Cursor (local agent skills)
+.cursor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Legacy / local-only paths
+/zillow/
+/zillow/zillow_main_new_models.py

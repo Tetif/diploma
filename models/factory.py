@@ -1,5 +1,9 @@
 from .tree_models import LightGBMModel, XGBoostModel, RandomForestModel, CatBoostModel
-from .torch_models import PyTorchModelWrapper, DistilledModelWrapper
+from .torch_models import (
+    PyTorchModelWrapper,
+    DistilledModelWrapper,
+    DEFAULT_CNN_SMALL_PARAMS,
+)
 from config.settings import DEVICE
 
 
@@ -25,8 +29,10 @@ class ModelFactory:
         input_size = model_params.get('input_size')
         device = model_params.get('device', DEVICE)
         model_architecture = model_params.get('model_architecture', 'simple')
+        student_architecture = model_params.get('student_architecture', model_architecture)
         use_distillation = model_params.get('use_distillation', False)
         distillation_epochs = model_params.get('distillation_epochs', 50)
+        temperature = model_params.get('temperature', 2.0)
         task_type = model_params.get('task_type', 'regression')
 
         # Extracting model-specific parameters (those that are not generic params)
@@ -41,38 +47,87 @@ class ModelFactory:
                 base_model = LightGBMModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
-                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs, num_classes=num_classes)
+                return DistilledModelWrapper(
+                    base_model,
+                    input_size,
+                    device,
+                    student_architecture,
+                    distillation_epochs,
+                    temperature=temperature,
+                    num_classes=num_classes,
+                    task_type=task_type,
+                )
             return LightGBMModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'xgboost':
             if use_distillation:
                 base_model = XGBoostModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
-                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs, num_classes=num_classes)
+                return DistilledModelWrapper(
+                    base_model,
+                    input_size,
+                    device,
+                    student_architecture,
+                    distillation_epochs,
+                    temperature=temperature,
+                    num_classes=num_classes,
+                    task_type=task_type,
+                )
             return XGBoostModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'random_forest':
             if use_distillation:
                 base_model = RandomForestModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
-                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs, num_classes=num_classes)
+                return DistilledModelWrapper(
+                    base_model,
+                    input_size,
+                    device,
+                    student_architecture,
+                    distillation_epochs,
+                    temperature=temperature,
+                    num_classes=num_classes,
+                    task_type=task_type,
+                )
             return RandomForestModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'catboost':
             if use_distillation:
                 base_model = CatBoostModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
                     raise ValueError("Для дистиллированной модели требуется input_size")
-                return DistilledModelWrapper(base_model, input_size, device, model_architecture, distillation_epochs, num_classes=num_classes)
+                return DistilledModelWrapper(
+                    base_model,
+                    input_size,
+                    device,
+                    student_architecture,
+                    distillation_epochs,
+                    temperature=temperature,
+                    num_classes=num_classes,
+                    task_type=task_type,
+                )
             return CatBoostModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'pytorch':
             if input_size is None:
                 raise ValueError("Для PyTorch модели требуется input_size")
-            # Архитектурные параметры (layers, dropout, learning_rate и т.д.) лежат в model_params[model_architecture]
+            if model_architecture == 'cnn_small' and input_size not in (3072, 784):
+                raise ValueError(
+                    "Архитектура cnn_small поддерживает только вход размера 3072 (CIFAR-10) "
+                    f"или 784 (MNIST), получено input_size={input_size}"
+                )
             arch_config = model_params.get(model_architecture)
-            if isinstance(arch_config, dict):
+            if model_architecture == 'cnn_small':
+                if isinstance(arch_config, dict):
+                    torch_kwargs = dict(arch_config)
+                else:
+                    torch_kwargs = dict(DEFAULT_CNN_SMALL_PARAMS)
+            elif isinstance(arch_config, dict):
                 torch_kwargs = dict(arch_config)
             else:
                 torch_kwargs = {}
+            if task_type == 'multiclass_classification':
+                nc = model_params.get('num_class')
+                if nc is not None:
+                    torch_kwargs['num_classes'] = int(nc)
             if task_type == 'binary_classification' and model_params.get('pos_weight') is not None:
                 torch_kwargs['pos_weight'] = model_params['pos_weight']
             return PyTorchModelWrapper(
@@ -93,7 +148,9 @@ class ModelFactory:
             'model_type', 'input_size', 'device', 'model_architecture',
             'use_distillation', 'distillation_epochs', 'task_type',
             'removal_strategy', 'sample_size_percentage', 'temperature',
-            'student_architecture', 'available_metrics'
+            'student_architecture', 'available_metrics', 'num_class',
+            # передаются в DistilledModelWrapper.fit(), не в конструкторы деревьев
+            'distillation_patience', 'distillation_min_delta',
         }
         
         # For tree-based models, also exclude PyTorch-specific params
@@ -117,6 +174,13 @@ class ModelFactory:
         # Create dict with all model params except generic/irrelevant ones
         specific_params = {k: v for k, v in model_params.items() 
                           if k not in generic_keys}
+        nc = model_params.get('num_class')
+        # LightGBM / XGBoost multiclass берут num_class из params (см. датасет-конфиги).
+        if nc is not None and model_type in ('lightgbm', 'xgboost'):
+            try:
+                specific_params['num_class'] = int(nc)
+            except (TypeError, ValueError):
+                pass
         return specific_params
 
     @staticmethod
