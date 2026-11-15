@@ -156,6 +156,15 @@ def main(dataset_name=None):
         time_series=cfg.use_time_split,
     )
 
+    # [AUDIT-FIX M7] Клиппинг выбросов цели по квантилям ТОЛЬКО train (после сплита).
+    # Применяется к train и к test (early stopping / цель influence); holdout не трогаем.
+    clip_q = getattr(cfg, 'train_target_clip_quantiles', None)
+    if clip_q and cfg.task_type == 'regression':
+        lo, hi = y_train.quantile([clip_q[0], clip_q[1]])
+        y_train = y_train.clip(lo, hi)
+        y_test = y_test.clip(lo, hi)
+        logger.log_message(f"Target clipped by train quantiles {clip_q}: [{lo:.4f}, {hi:.4f}] (holdout untouched)")
+
     logger.log_message(f"Final data split:")
     logger.log_message(f"   Train: {len(X_train)} rows")
     logger.log_message(f"   Test: {len(X_test)} rows")
@@ -337,4 +346,4 @@ if __name__ == '__main__':
                         help=f"Dataset name. If not set, uses CURRENT_DATASET from config/settings.py (now: {CURRENT_DATASET})")
     args = parser.parse_args()
     # Явно: без --dataset используем только settings (в main при None подставится CURRENT_DATASET)
-    main(args.dataset)
+    main(args.dataset)

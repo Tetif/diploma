@@ -177,8 +177,30 @@ class PyTorchModelWrapper(BaseModel):
     многоклассовая классификация (CrossEntropyLoss, K логитов).
     """
 
+    # Число полных (full-batch) эпох для fit(X, y) без явного epochs — так модель обучают
+    # pyDVL-методы (LOO/TMC/...) на каждом подмножестве. Раньше было 5 эпох => модель почти не училась.
+    DEFAULT_FIT_EPOCHS = 200
+
     def __init__(self, input_size, model_architecture='simple', device=DEVICE, task_type='regression', pos_weight=None, **kwargs):
         super().__init__()
+        # [AUDIT-FIX B1] Запоминаем ВСЕ аргументы конструктора как есть (те же объекты),
+        # чтобы sklearn.clone() (его использует pyDVL ModelUtility) воссоздавал ту же модель:
+        # тот же task_type/loss, архитектуру, lr, pos_weight, num_classes, эпохи.
+        self._ctor_params = dict(
+            input_size=input_size,
+            model_architecture=model_architecture,
+            device=device,
+            task_type=task_type,
+            pos_weight=pos_weight,
+            **kwargs,
+        )
+        kwargs = dict(kwargs)
+        self.default_epochs = int(kwargs.pop('default_epochs', None) or self.DEFAULT_FIT_EPOCHS)
+        self.refit_seed = kwargs.pop('refit_seed', None)
+        self._build(input_size, model_architecture, device, task_type, pos_weight, kwargs)
+
+    def _build(self, input_size, model_architecture, device, task_type, pos_weight, kwargs):
+        kwargs = dict(kwargs)
         self.input_size = input_size
         self.device = device
         self.model_architecture = model_architecture
@@ -238,8 +260,27 @@ class PyTorchModelWrapper(BaseModel):
             self.criterion = nn.MSELoss()
         self.val_losses_for_scheduler = []
 
-    def fit(self, X, y, epochs=5, **kwargs):
-        X_tensor = torch.FloatTensor(X).to(self.device)
+    def _rebuild_from_scratch(self):
+        """Новая инициализация весов/оптимизатора (детерминированно, если задан refit_seed)."""
+        if self.refit_seed is not None:
+            torch.manual_seed(int(self.refit_seed))
+        p = dict(self._ctor_params)
+        p.pop('default_epochs', None)
+        p.pop('refit_seed', None)
+        self._build(p.pop('input_size'), p.pop('model_architecture'), p.pop('device'),
+                    p.pop('task_type'), p.pop('pos_weight'), p)
+
+    def fit(self, X, y, epochs=None, **kwargs):
+        """
+        epochs задан  -> дообучить текущие веса на epochs full-batch шагов (так делает
+                         основной цикл train_and_evaluate: fit(..., epochs=1) на каждой эпохе).
+        epochs=None   -> sklearn-семантика «обучить с нуля»: переинициализация и
+                         self.default_epochs шагов (так вызывает pyDVL на подмножествах).
+        """
+        if epochs is None:
+            self._rebuild_from_scratch()
+            epochs = self.default_epochs
+        X_tensor = torch.FloatTensor(np.asarray(X, dtype=np.float32)).to(self.device)
         self.model.train()
         total_loss = 0
         if self.task_type == 'multiclass_classification':
@@ -252,7 +293,7 @@ class PyTorchModelWrapper(BaseModel):
                 self.optimizer.step()
                 total_loss += loss.item()
         else:
-            y_tensor = torch.FloatTensor(y).reshape(-1, 1).to(self.device)
+            y_tensor = torch.FloatTensor(np.asarray(y, dtype=np.float32)).reshape(-1, 1).to(self.device)
             for _ in range(epochs):
                 self.optimizer.zero_grad()
                 output = self.model(X_tensor)
@@ -293,18 +334,13 @@ class PyTorchModelWrapper(BaseModel):
         return self.model.named_parameters()
 
     def get_params(self, deep=True):
-        """Возвращает параметры модели (совместимость с sklearn)"""
-        return {
-            'input_size': self.input_size,
-            'model_architecture': self.model_architecture,
-            'device': self.device
-        }
+        """[AUDIT-FIX B1] Все аргументы конструктора (sklearn.clone -> идентичная конфигурация)."""
+        return dict(self._ctor_params)
 
     def set_params(self, **params):
-        if 'model_architecture' in params:
-            self.model_architecture = params['model_architecture']
-        if 'device' in params:
-            self.device = params['device']
+        p = dict(self._ctor_params)
+        p.update(params)
+        self.__init__(**p)
         return self
 
 
@@ -524,6 +560,7 @@ class DistilledModelWrapper(BaseModel):
             'model_architecture': self.model_architecture,
             'distillation_epochs': self.distillation_epochs,
             'temperature': self.temperature,
+            'num_classes': self.num_classes,  # [AUDIT-FIX B1] раньше терялся при clone()
             'task_type': self.task_type
         }
 

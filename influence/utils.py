@@ -15,6 +15,22 @@ def _extract_numeric_values_from_result(result):
     attrs = [a for a in dir(result) if not a.startswith('_')]
     debug_print(f"[DEBUG] Public attributes: {attrs[:15]}")
 
+    # [AUDIT-FIX B3] Надёжный путь для pyDVL >= 0.10: ValuationResult с массивами
+    # .indices/.values — значения раскладываются строго по индексам обучающей выборки.
+    try:
+        vr = result.values() if callable(getattr(result, 'values', None)) else result
+        idx = getattr(vr, 'indices', None)
+        vals = getattr(vr, 'values', None)
+        if idx is not None and vals is not None and not callable(vals):
+            idx = np.asarray(idx).astype(int)
+            vals = np.asarray(vals, dtype=float)
+            if idx.size == vals.size and idx.size > 0 and idx.min() >= 0:
+                out = np.full(int(idx.max()) + 1, np.nan)
+                out[idx] = vals
+                return out
+    except Exception as e:
+        debug_print(f"[DEBUG] fast ValuationResult extraction failed: {e}")
+
     extraction_methods = [
         ('values()', lambda: result.values()),
         ('dict values', lambda: list(result.values()) if hasattr(result, 'values') else None),
@@ -48,8 +64,8 @@ def _extract_numeric_values_from_result(result):
     for i, v in enumerate(items_list):
         if v is None:
             if i < 5:
-                debug_print(f"[DEBUG] Item {i}: value is None, appending 0.0")
-            numeric.append(0.0)
+                debug_print(f"[DEBUG] Item {i}: value is None, appending NaN")
+            numeric.append(np.nan)  # [AUDIT-FIX B3] было 0.0
             continue
 
         if i < 15:  # Debug first 15 items for LOO/TMCShapley
@@ -87,8 +103,8 @@ def _extract_numeric_values_from_result(result):
 
         if extracted is None:
             if i < 15:
-                debug_print(f"[DEBUG] Item {i}: ALL EXTRACTORS FAILED, using 0.0")
-            numeric.append(0.0)
+                debug_print(f"[DEBUG] Item {i}: ALL EXTRACTORS FAILED, using NaN")
+            numeric.append(np.nan)  # [AUDIT-FIX B3] было 0.0 (молчаливая подмена)
         else:
             numeric.append(extracted)
 
@@ -103,7 +119,8 @@ def _extract_numeric_values_from_result(result):
         if result_array.size > 0:
             debug_print(f"[DEBUG] Min: {np.min(result_array):.10g}, Max: {np.max(result_array):.10g}, Mean: {np.mean(result_array):.10g}")
         
-        sentinel_mask = np.abs(result_array) > 9e5
+        # [AUDIT-FIX B4] Скореры больше не возвращают сентинел -1e6, маскирование отключено.
+        sentinel_mask = np.zeros(result_array.shape, dtype=bool)
         if np.any(sentinel_mask):
             debug_print(f"[DEBUG] Detected {int(np.sum(sentinel_mask))} sentinel fail_score values, replacing with NaN")
             # Log sample of original items that produced extreme values

@@ -37,6 +37,7 @@ class LightGBMModel(BaseModel):
         super().__init__()
         self.model = None
         self.task_type = task_type
+        self._params_arg = params  # [AUDIT-FIX B1] для get_params()/clone()
         # Use provided params, fall back to defaults
         if params is None:
             self.params = DEFAULT_MODEL_PARAMS['lightgbm'].copy()
@@ -97,10 +98,16 @@ class LightGBMModel(BaseModel):
         return p
 
     def get_params(self, deep=True):
-        """Возвращает параметры модели (совместимость с sklearn)"""
-        return self.params.copy() if deep else self.params
+        """[AUDIT-FIX B1] Аргументы конструктора (те же объекты) — sklearn.clone() сохраняет task_type."""
+        return {'params': self._params_arg, 'task_type': self.task_type}
 
     def set_params(self, **params):
+        if 'task_type' in params:
+            self.task_type = params.pop('task_type')
+        if 'params' in params:
+            new = params.pop('params')
+            self._params_arg = new
+            self.params = dict(new) if isinstance(new, dict) else self.params
         self.params.update(params)
         return self
 
@@ -110,6 +117,7 @@ class XGBoostModel(BaseModel):
         super().__init__()
         self.model = None
         self.task_type = task_type
+        self._params_arg = params  # [AUDIT-FIX B1] для get_params()/clone()
         if params is None:
             self.params = DEFAULT_MODEL_PARAMS['xgboost'].copy()
         else:
@@ -136,10 +144,16 @@ class XGBoostModel(BaseModel):
         return self.model.predict(X)
 
     def get_params(self, deep=True):
-        """Возвращает параметры модели (совместимость с sklearn)"""
-        return self.params.copy() if deep else self.params
+        """[AUDIT-FIX B1] Аргументы конструктора (те же объекты) — sklearn.clone() сохраняет task_type."""
+        return {'params': self._params_arg, 'task_type': self.task_type}
 
     def set_params(self, **params):
+        if 'task_type' in params:
+            self.task_type = params.pop('task_type')
+        if 'params' in params:
+            new = params.pop('params')
+            self._params_arg = new
+            self.params = dict(new) if isinstance(new, dict) else self.params
         self.params.update(params)
         return self
 
@@ -149,6 +163,7 @@ class RandomForestModel(BaseModel):
         super().__init__()
         self.model = None
         self.task_type = task_type
+        self._params_arg = params  # [AUDIT-FIX B1] для get_params()/clone()
         if params is None:
             self.params = DEFAULT_MODEL_PARAMS['random_forest'].copy()
         else:
@@ -174,10 +189,16 @@ class RandomForestModel(BaseModel):
         return np.asarray(self.model.predict(X))
 
     def get_params(self, deep=True):
-        """Возвращает параметры модели (совместимость с sklearn)"""
-        return self.params.copy() if deep else self.params
+        """[AUDIT-FIX B1] Аргументы конструктора (те же объекты) — sklearn.clone() сохраняет task_type."""
+        return {'params': self._params_arg, 'task_type': self.task_type}
 
     def set_params(self, **params):
+        if 'task_type' in params:
+            self.task_type = params.pop('task_type')
+        if 'params' in params:
+            new = params.pop('params')
+            self._params_arg = new
+            self.params = dict(new) if isinstance(new, dict) else self.params
         self.params.update(params)
         return self
 
@@ -187,6 +208,7 @@ class CatBoostModel(BaseModel):
         super().__init__()
         self.model = None
         self.task_type = task_type
+        self._params_arg = params  # [AUDIT-FIX B1] для get_params()/clone()
         if params is None:
             self.params = DEFAULT_MODEL_PARAMS['catboost'].copy()
         else:
@@ -212,9 +234,15 @@ class CatBoostModel(BaseModel):
         return np.asarray(self.model.predict(X))
 
     def get_params(self, deep=True):
-        """Возвращает параметры модели (совместимость с sklearn)"""
-        return self.params.copy() if deep else self.params
+        """[AUDIT-FIX B1] Аргументы конструктора (те же объекты) — sklearn.clone() сохраняет task_type."""
+        return {'params': self._params_arg, 'task_type': self.task_type}
 
     def set_params(self, **params):
+        if 'task_type' in params:
+            self.task_type = params.pop('task_type')
+        if 'params' in params:
+            new = params.pop('params')
+            self._params_arg = new
+            self.params = dict(new) if isinstance(new, dict) else self.params
         self.params.update(params)
-        return self
+        return self

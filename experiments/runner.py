@@ -728,9 +728,37 @@ class ExperimentRunner:
 
         return history, model, y_scaler
 
+    @staticmethod
+    def _aggregate_runs(run_tuples):
+        """
+        [AUDIT-FIX M1] Усреднение по сидам вместо выбора лучшего по holdout.
+        Возвращает (history, model, y_scaler): history первого запуска, но с
+        final_metric = среднее по запускам, final_metric_std и final_metric_runs.
+        Модель/скейлер — первого запуска (фиксированный seed, без отбора по holdout).
+        """
+        finals = [t[0].get('final_metric', t[0].get('final_mae')) for t in run_tuples]
+        finals = [float(v) for v in finals if v is not None]
+        bests = [float(t[0].get('best_val_metric')) for t in run_tuples if t[0].get('best_val_metric') is not None]
+        hist = dict(run_tuples[0][0])
+        if finals:
+            hist['final_metric'] = float(np.mean(finals))
+            hist['final_mae'] = hist['final_metric']
+            hist['final_metric_std'] = float(np.std(finals))
+            hist['final_metric_runs'] = finals
+        if bests:
+            hist['best_val_metric'] = float(np.mean(bests))
+            hist['best_val_mae'] = hist['best_val_metric']
+        hist['n_seed_runs'] = len(run_tuples)
+        return hist, run_tuples[0][1], run_tuples[0][2]
+
     def _train_best_of_n(self, preprocessor, model_params, X_sub, y_sub,
                          X_test, y_test, X_val, y_val, n_epochs, n_retrain_runs,
                          higher_is_better):
+        if settings_module.EXPERIMENT_CONFIG.get('retrain_aggregate', 'mean') == 'mean':
+            return self._train_best_of_n_with_model(
+                preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val,
+                n_epochs, n_retrain_runs, higher_is_better,
+            )[0]
         """
         Запускает train_and_evaluate до n_retrain_runs раз с разными seed,
         возвращает историю с наилучшим final_metric. Реализует идею "kill bad runs".
@@ -789,6 +817,18 @@ class ExperimentRunner:
                 preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val, n_epochs
             )
 
+        if settings_module.EXPERIMENT_CONFIG.get('retrain_aggregate', 'mean') == 'mean':
+            runs = [
+                self.train_and_evaluate(
+                    preprocessor, model_params, X_sub, y_sub, X_test, y_test, X_val, y_val,
+                    n_epochs, _run_seed=settings_module.RANDOM_STATE + run_i * 1000,
+                )
+                for run_i in range(n_retrain_runs)
+            ]
+            return self._aggregate_runs(runs)
+
+        # Legacy (retrain_aggregate='best_holdout'): выбор лучшего запуска по holdout —
+        # оптимистично смещённая оценка, оставлено только для воспроизведения старых графиков.
         best_tuple = None
         fallback_tuple = None
         for run_i in range(n_retrain_runs):
@@ -948,6 +988,13 @@ class ExperimentRunner:
         for method, vals in methods_items:
             if self.logger:
                 self.logger.log_message(f"\nProcessing method: {method}")
+            if not np.all(np.isfinite(np.asarray(vals, dtype=float))):
+                # [AUDIT-FIX B3] невалидные скоры (NaN) не сортируем — метод пропускается
+                invalid = self.results.setdefault('orig', {}).setdefault('invalid_methods', {})
+                invalid.setdefault(method, 'non-finite scores')
+                if self.logger:
+                    self.logger.log_message(f"  [SKIP] {method}: невалидные скоры (NaN/inf), кривая не строится")
+                continue
 
             is_influence_method = method in influence_method_names
 
@@ -1173,15 +1220,11 @@ class ExperimentRunner:
                     if self.logger:
                         self.logger.log_message(f"  LossLow: remove lowest loss first")
                 else:
-                    if scorer_higher_is_better:
-                        idx_sorted = np.argsort(vals)
-                    else:
-                        idx_sorted = np.argsort(vals)[::-1]
+                    # [AUDIT-FIX B2] Скореры теперь всегда «больше = лучше» (MAE -> -MAE),
+                    # поэтому ценность valuation-методов: больше = ценнее. Удаляем наименее ценные.
+                    idx_sorted = np.argsort(vals)
                     if self.logger:
-                        self.logger.log_message(
-                            f"  Valuation method {method}: remove {'lowest' if scorer_higher_is_better else 'highest'} first "
-                            f"(scorer_higher_is_better={scorer_higher_is_better})"
-                        )
+                        self.logger.log_message(f"  Valuation method {method}: remove lowest value first")
 
                 for pct in n_remove_list:
                     pbar_methods.set_postfix_str(f"{plot_method} {pct}%", refresh=True)
@@ -1196,7 +1239,7 @@ class ExperimentRunner:
                             np.asarray(vals).ravel(),
                             y_train,
                             n_to_remove,
-                            scorer_higher_is_better,
+                            True,  # [AUDIT-FIX B2] ценности: больше = ценнее
                             remove_smallest_first=loss_remove_smallest_first,
                         )
                     elif strata_labels is not None:
@@ -1204,7 +1247,7 @@ class ExperimentRunner:
                             np.asarray(vals).ravel(),
                             strata_labels,
                             n_to_remove,
-                            scorer_higher_is_better,
+                            True,  # [AUDIT-FIX B2] ценности: больше = ценнее
                             remove_smallest_first=loss_remove_smallest_first,
                         )
                     else:
@@ -1486,7 +1529,8 @@ class ExperimentRunner:
         # Настройка методов влияния
         influence_methods = InfluenceMethods(self.logger, dataset_config=dataset_config)
         methods, _ = influence_methods.setup_methods(pipeline, X_train, y_train,
-                                                     X_test, y_test, preprocessor, methods_to_use=selected_methods)
+                                                     X_test, y_test, preprocessor, methods_to_use=selected_methods,
+                                                     y_scaler=y_scaler)
         if self.logger:
             self.logger.log_message("[OK] Influence methods configured.")
 
@@ -1497,6 +1541,13 @@ class ExperimentRunner:
         scores, scores_raw = influence_methods.compute_scores(methods, X_train, y_train,
                                                               preprocessor, X_test, y_test, pipeline,
                                                               y_scaler=y_scaler)
+        failed = dict(getattr(influence_methods, 'failed_methods', {}) or {})
+        if failed:
+            # [AUDIT-FIX B3] явная пометка в результатах вместо молчаливых нулей
+            self.results['orig']['invalid_methods'] = failed
+            if self.logger:
+                for _m, _why in failed.items():
+                    self.logger.log_message(f"[INVALID] {_m}: {_why} — кривая удаления строиться не будет")
         if self.logger:
             self.logger.log_message("[OK] Influence scores computed.")
 
@@ -1715,4 +1766,4 @@ class ExperimentRunner:
         history, model, _ = self.train_and_evaluate(preprocessor, model_params,
                                                      X_train, y_train, X_val, y_val, n_epochs)
 
-        return history, model
+        return history, model

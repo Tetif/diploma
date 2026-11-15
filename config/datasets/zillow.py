@@ -46,6 +46,10 @@ class ZillowConfig(BaseDatasetConfig):
         'total_finished_sqft', 'age', 'price_per_sqft'
     ]
 
+    # [AUDIT-FIX M7] Клиппинг logerror теперь делается ПОСЛЕ сплита по квантилям только train
+    # (см. main.py: train_target_clip_quantiles); holdout не клиппится и не участвует в расчёте.
+    train_target_clip_quantiles = (0.005, 0.995)
+
     # Параметры разделения
     test_size = 0.2
     val_size = 0.1
@@ -106,9 +110,8 @@ class ZillowConfig(BaseDatasetConfig):
 
         target = df[self.target_column].copy()
 
-        # Клиппинг выбросов logerror (min -4.6, max 4.7 при std 0.16)
-        low, high = target.quantile([0.005, 0.995])
-        target = target.clip(low, high)
+        # [AUDIT-FIX M7] Раньше здесь был клиппинг по квантилям ВСЕХ данных до сплита
+        # (утечка информации из holdout). Перенесено в main.py после сплита.
 
         # Убрать целевую переменную из признаков
         df = df.drop(columns=[self.target_column])

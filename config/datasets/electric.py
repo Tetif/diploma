@@ -25,7 +25,9 @@ class ElectricConfig(BaseDatasetConfig):
     categorical_columns = []
     numeric_columns = [
         'hour', 'day_of_week', 'month',
-        'Global_reactive_power', 'Voltage', 'Global_intensity',
+        # [AUDIT-FIX M7] 'Global_intensity' убран: это ток в ту же минуту,
+        # Global_active_power ≈ Voltage × Global_intensity / 1000 — утечка целевой переменной.
+        'Global_reactive_power', 'Voltage',
         'Sub_metering_1', 'Sub_metering_2', 'Sub_metering_3'
     ]
 

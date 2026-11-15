@@ -34,10 +34,12 @@ MODEL_RUN_CONFIG = {
     'model_architecture': 'simple',  # pytorch: simple, improved, ft_transformer, ft_transformer_simple, cnn_small
     # Стратегии удаления для анализа influence-весов и вспомогательных скриптов.
     'removal_strategies': [
-        # "lowest",
-        # "highest",
+        # [AUDIT-FIX M3] lowest/highest включены: именно они проверяют гипотезу.
+        # 'extremes' смешивает вредные и полезные точки (эффекты гасятся) — выключено.
+        "lowest",
+        "highest",
         "random",
-        "extremes",
+        # "extremes",
         # "median",
         # "few_bad_then_random",
         # "few_median_then_random",
@@ -82,11 +84,18 @@ EXPERIMENT_CONFIG = {
     'sample_size_percentage': 10,
     # Проценты удаления: (start, stop, num) для np.linspace — единый источник для main и вспомогательных скриптов
     'n_remove_linspace': (1, 90, 10),
-    'n_random_runs': 1,
+    'n_random_runs': 5,  # [AUDIT-FIX M2] было 1 — нельзя оценить разброс случайного удаления
     # Число переобучений PyTorch для каждой точки removal: берётся лучший из n запусков.
     # Устраняет нестабильность из-за плохой инициализации ("kill bad runs").
     # 1 = без повторов (старое поведение); 3 = хороший баланс качества и скорости.
     'n_retrain_runs': 3,
+    # [AUDIT-FIX M1] Как объединять n_retrain_runs запусков:
+    #   'mean'         — среднее по сидам (+ final_metric_std), holdout не используется для выбора;
+    #   'best_holdout' — старое поведение: лучший из n по holdout (оптимистично смещено).
+    'retrain_aggregate': 'mean',
+    # [AUDIT-FIX B1] Сколько full-batch эпох обучается PyTorch-модель на каждом подмножестве
+    # внутри valuation-методов pyDVL (LOO/TMC/...). Раньше фактически было 5.
+    'valuation_epochs': 200,
     # Дополнительные baselines по loss. Оставьте только нужные:
     # loss_high = удалять сначала объекты с наибольшим loss
     # loss_low = удалять сначала объекты с наименьшим loss
@@ -464,4 +473,4 @@ __all__ = [
     'get_metric_metadata',
     'get_n_remove_list',
     'get_selected_loss_removal_methods',
-]
+]

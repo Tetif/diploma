@@ -130,6 +130,14 @@ class ModelFactory:
                     torch_kwargs['num_classes'] = int(nc)
             if task_type == 'binary_classification' and model_params.get('pos_weight') is not None:
                 torch_kwargs['pos_weight'] = model_params['pos_weight']
+            # [AUDIT-FIX B1] Сколько full-batch эпох делает fit(X, y) «с нуля» (так обучают
+            # модель pyDVL-методы на подмножествах) и seed переинициализации — для воспроизводимости.
+            from config.settings import EXPERIMENT_CONFIG, RANDOM_STATE
+            torch_kwargs.setdefault(
+                'default_epochs',
+                int(model_params.get('valuation_epochs') or EXPERIMENT_CONFIG.get('valuation_epochs', 200)),
+            )
+            torch_kwargs.setdefault('refit_seed', RANDOM_STATE)
             return PyTorchModelWrapper(
                 input_size,
                 device=device,
@@ -197,4 +205,4 @@ class ModelFactory:
         if dataset_name is not None:
             from config.settings import get_model_config as settings_get_model_config
             return settings_get_model_config(dataset_name, model_type)
-        return {}
+        return {}

@@ -32,7 +32,7 @@ from config.settings import (
     INFLUENCE_METHODS_CONFIG,
     get_selected_metric,
 )
-from .scorers import ScorerFactory
+from .scorers import ScorerFactory, constant_predictor_score
 
 
 class SafeModelWrapper:
@@ -63,10 +63,9 @@ class SafeModelWrapper:
         
         # Fit the underlying model
         if self.model is not None:
-            try:
-                self.model.fit(X, y, **kwargs)
-            except Exception as e:
-                debug_print(f"SafeModelWrapper.fit failed: {e}, but continuing anyway")
+            # [AUDIT-FIX B3] Ошибки обучения больше не глотаются: раньше модель оставалась
+            # необученной, а скорер давал «нормальное» число.
+            self.model.fit(X, y, **kwargs)
         self._fitted = True
         return self
     
@@ -84,14 +83,8 @@ class SafeModelWrapper:
             else:
                 return np.array([], dtype=int)
         
-        try:
-            return self.model.predict(X)
-        except Exception as e:
-            debug_print(f"SafeModelWrapper.predict failed: {e}")
-            if self._is_regressor:
-                return np.zeros(len(X))
-            else:
-                return np.zeros(len(X), dtype=int)
+        # [AUDIT-FIX B3] без молчаливой подмены предсказаний нулями
+        return self.model.predict(X)
     
     def get_params(self, deep=True):
         # When deep=True, return a deepcopy so that sklearn's clone() creates
@@ -128,6 +121,10 @@ class InfluenceMethods:
         self.dataset_config = dataset_config
         self.methods = {}
         self._is_multiclass = False
+
+    def _is_classification(self):
+        tt = getattr(self.dataset_config, 'task_type', None) if self.dataset_config else None
+        return tt in ('binary_classification', 'multiclass_classification')
 
     @staticmethod
     def _extract_torch_model(model_wrapper):
@@ -224,7 +221,7 @@ class InfluenceMethods:
         return torch.nn.MSELoss()
 
     def setup_methods(self, pipeline, X_train, y_train, X_val, y_val,
-                      preprocessor, methods_to_use=None):
+                      preprocessor, methods_to_use=None, y_scaler=None):
         """
         Подготавливает методы оценки влияния
         """
@@ -252,6 +249,12 @@ class InfluenceMethods:
         X_val_t = np.asarray(X_val_t)
         y_train_1d = np.asarray(y_train).reshape(-1)
         y_val_1d = np.asarray(y_val).reshape(-1)
+        # [AUDIT-FIX B5] Регрессия: valuation в той же шкале y, что и обучение модели
+        # (train_and_evaluate обучает на стандартизованном y).
+        if y_scaler is not None and not self._is_classification():
+            y_train_1d = y_scaler.transform(y_train_1d.reshape(-1, 1)).ravel()
+            y_val_1d = y_scaler.transform(y_val_1d.reshape(-1, 1)).ravel()
+        self._valuation_y_scaler = y_scaler if not self._is_classification() else None
 
         # Создание Dataset
         n_features = X_train_t.shape[1]
@@ -316,22 +319,26 @@ class InfluenceMethods:
                     if self.logger:
                         self.logger.log_message(f"Failed to refit model: {e}")
 
+        # [AUDIT-FIX B4] u(∅) = качество константного предсказателя, а не -1e6.
+        empty_set_utility = constant_predictor_score(scorer_name, y_train_1d, y_val_1d)
         supervised_scorer = SupervisedScorer(
             scoring=scorer_callable,
             test_data=val_dataset,
-            default=float(-1e6),
+            default=float(empty_set_utility),
             range=None
         )
         
         if self.logger:
-            self.logger.log_message(f"[DEBUG] SupervisedScorer created with default={-1e6}")
+            self.logger.log_message(f"[DEBUG] SupervisedScorer created with default (constant predictor) = {empty_set_utility:.6g}")
             self.logger.log_message(f"[DEBUG] Scorer callable: {scorer_callable}")
 
         utility = ModelUtility(
             model=model_wrapper,
             scorer=supervised_scorer,
             show_warnings=True,
-            clone_before_fit=True  # Изменено на True для клонирования модели перед каждым fit
+            # [AUDIT-FIX B3] ошибки fit/score не превращаются молча в default-значение
+            catch_errors=False,
+            clone_before_fit=True  # clone() теперь воспроизводит полную конфигурацию модели (B1)
         )
         
         if self.logger:
@@ -676,13 +683,20 @@ class InfluenceMethods:
 
         X_train_df = pd.DataFrame(X_train_t, columns=feature_names)
         X_val_df = pd.DataFrame(X_val_t, columns=feature_names)
-        y_train_series = pd.Series(y_train_arr, name="y")
-        y_val_series = pd.Series(y_val_arr, name="y")
+        # [AUDIT-FIX B5] valuation-методы получают y в шкале обучения (для регрессии — стандартизованный)
+        y_train_val_space = y_train_arr
+        y_val_val_space = y_val_arr
+        if y_scaler is not None and not self._is_multiclass and not self._is_classification():
+            y_train_val_space = y_scaler.transform(y_train_arr.reshape(-1, 1)).ravel()
+            y_val_val_space = y_scaler.transform(y_val_arr.reshape(-1, 1)).ravel()
+        y_train_series = pd.Series(y_train_val_space, name="y")
+        y_val_series = pd.Series(y_val_val_space, name="y")
 
         try:
             train_dataset = Dataset(X_train_df, y_train_series, X_val_df, y_val_series)
         except Exception as e:
-            train_dataset = Dataset(X_train_t, y_train_arr.reshape(-1, 1), X_val_t, y_val_arr.reshape(-1, 1))
+            train_dataset = Dataset(X_train_t, y_train_val_space.reshape(-1, 1), X_val_t, y_val_val_space.reshape(-1, 1))
+        self.failed_methods = {}
 
         scores = {}
         scores_raw = {}
@@ -831,6 +845,10 @@ class InfluenceMethods:
                     except Exception as e:
                         debug_print(f"Failed to log raw influence diagnostics: {e}")
 
+                    if not np.isfinite(per_train).all():
+                        raise RuntimeError(
+                            f"{name}: {int(np.sum(~np.isfinite(per_train)))} non-finite influence values"
+                        )
                     scores_raw[name] = per_train.copy()
                     scores[name] = per_train.copy()
 
@@ -856,15 +874,11 @@ class InfluenceMethods:
                             if result is None:
                                 if self.logger:
                                     self.logger.log_message(f"[DEBUG] WARNING: {name} method returned None result")
-                                scores[name] = np.zeros(len(X_train_t))
-                                scores_raw[name] = np.zeros(len(X_train_t))
-                                continue
+                                raise RuntimeError(f"{name}: fit() returned None")
                         except Exception as fit_e:
                             if self.logger:
                                 self.logger.log_message(f"ERROR: Failed to fit {name} method: {fit_e}")
-                            scores[name] = np.zeros(len(X_train_t))
-                            scores_raw[name] = np.zeros(len(X_train_t))
-                            continue
+                            raise  # [AUDIT-FIX B3] -> внешний except пометит метод как невалидный
 
                     values_arr = _extract_numeric_values_from_result(result)
 
@@ -881,23 +895,14 @@ class InfluenceMethods:
                                         self.logger.log_message(f"[DEBUG] {name}: First value: {vals_direct[0]}")
                             except Exception as e:
                                 self.logger.log_message(f"[DEBUG] {name}: Direct values() failed: {e}")
-                        scores[name] = np.zeros(len(X_train_t))
-                        scores_raw[name] = np.zeros(len(X_train_t))
-                        continue
+                        raise RuntimeError(f"{name}: empty values array")
 
                     expected_len = len(X_train_t)
                     if len(values_arr) != expected_len:
-                        if self.logger:
-                            self.logger.log_message(f"[DEBUG] WARNING: {name} returned {len(values_arr)} values, expected {expected_len}")
-                            if len(values_arr) < expected_len:
-                                # Дополняем нулями
-                                padding = np.zeros(expected_len - len(values_arr))
-                                self.logger.log_message(f"[DEBUG] {name}: Padding with {len(padding)} zeros")
-                                values_arr = np.concatenate([values_arr, padding])
-                            else:
-                                # Обрезаем до нужной длины
-                                self.logger.log_message(f"[DEBUG] {name}: Truncating to {expected_len}")
-                                values_arr = values_arr[:expected_len]
+                        # [AUDIT-FIX B3] раньше: молча дополняли нулями / обрезали
+                        raise RuntimeError(
+                            f"{name} returned {len(values_arr)} values, expected {expected_len}"
+                        )
 
                     # Diagnostic logging about extracted values
                     try:
@@ -924,10 +929,7 @@ class InfluenceMethods:
                         debug_print(f"Failed to log extracted values diagnostics for {name}: {e}")
 
                     if values_arr.size == 0:
-                        debug_print(f"WARNING: No values extracted for {name}, using zeros")
-                        scores[name] = np.zeros(len(X_train_t))
-                        scores_raw[name] = np.array([])
-                        continue
+                        raise RuntimeError(f"No values extracted for {name}")
 
                     scores_raw[name] = values_arr.copy()
 
@@ -938,9 +940,10 @@ class InfluenceMethods:
                         if self.logger:
                             bad_indices = np.where(~finite_mask)[0][:10]
                             self.logger.log_message(f"{name}: non-finite indices sample: {list(bad_indices)}")
-                        finite_vals = values_arr[finite_mask]
-                        fill_val = np.median(finite_vals) if finite_vals.size > 0 else 0.0
-                        values_arr[~finite_mask] = fill_val
+                        # [AUDIT-FIX B3] раньше: подмена медианой. Теперь метод невалиден.
+                        raise RuntimeError(
+                            f"{name}: {int(np.sum(~finite_mask))}/{len(values_arr)} non-finite values"
+                        )
 
                     scores[name] = values_arr.copy()
 
@@ -965,13 +968,15 @@ class InfluenceMethods:
                     import traceback
                     self.logger.log_message(traceback.format_exc())
 
-                # В случае ошибки используем нули
-                scores[name] = np.zeros(len(X_train_t))
-                scores_raw[name] = np.zeros(len(X_train_t))
+                # [AUDIT-FIX B3] Раньше здесь подставлялись нули, и argsort(нулей) давал
+                # «кривую» по исходному порядку строк. Теперь: NaN + явная пометка.
+                scores[name] = np.full(len(X_train_t), np.nan)
+                scores_raw[name] = np.full(len(X_train_t), np.nan)
+                self.failed_methods[name] = f"{type(e).__name__}: {e}"
 
             if self.logger:
                 self.logger.end_timing(f"{name}_computation")
                 if last_error is not None:
                     self.logger.record_cuda_oom_if_applicable(f"{name}_computation", last_error)
 
-        return scores, scores_raw
+        return scores, scores_raw
