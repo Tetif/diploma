@@ -256,3 +256,39 @@ def test_parallel_refit_is_deterministic():
         t.join()
     for m in models:
         assert np.allclose(m.predict(X), expected, atol=1e-6)
+
+
+def test_valuation_scorer_uses_validation_data():
+    """[B10] Utility pyDVL считается на X_val/y_val, а не на обучающей выборке."""
+    from models.factory import ModelFactory
+    from influence.methods import InfluenceMethods
+    from sklearn.pipeline import Pipeline
+
+    class _Id:
+        is_fitted = True
+
+        def transform(self, Z):
+            return np.asarray(Z, dtype=np.float32)
+
+    class _Cfg:
+        name = 'synthetic'
+        task_type = 'binary_classification'
+        metrics = ['accuracy', 'f1']
+
+    rng = np.random.default_rng(1)
+    Xtr = rng.normal(size=(40, 3)).astype(np.float32)
+    ytr = (Xtr[:, 0] > 0).astype(int)
+    Xva = rng.normal(size=(25, 3)).astype(np.float32) + 10.0
+    yva = (Xva[:, 1] > 10.0).astype(int)
+    m = ModelFactory.create_model(model_type='pytorch', model_architecture='simple', input_size=3,
+                                  device='cpu', task_type='binary_classification',
+                                  simple={'layers': [4], 'dropout': 0.0, 'learning_rate': 0.01})
+    m.default_epochs = 2
+    m.fit(Xtr, ytr)
+    im = InfluenceMethods(None, dataset_config=_Cfg())
+    pipe = Pipeline([('preproc', _Id()), ('model', m)])
+    meths, _ = im.setup_methods(pipe, pd.DataFrame(Xtr), pd.Series(ytr), pd.DataFrame(Xva),
+                                pd.Series(yva), _Id(), methods_to_use=['LOO'])
+    test_data = meths['LOO'].utility.scorer.test_data.data()
+    assert np.allclose(np.asarray(test_data.x), Xva)
+    assert np.array_equal(np.asarray(test_data.y).ravel(), yva)

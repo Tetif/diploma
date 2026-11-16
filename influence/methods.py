@@ -265,11 +265,10 @@ class InfluenceMethods:
         y_train_series = pd.Series(y_train_1d, name="y")
         y_val_series = pd.Series(y_val_1d, name="y")
 
-        try:
-            val_dataset = Dataset(X_train_df, y_train_series, X_val_df, y_val_series)
-        except Exception as e:
-            debug_print(f"DataFrame Dataset failed: {e}, trying array interface")
-            val_dataset = Dataset(X_train_t, y_train_1d.reshape(-1, 1), X_val_t, y_val_1d.reshape(-1, 1))
+        # [AUDIT-FIX B10] pyDVL 0.10: Dataset(x, y, feature_names, target_names, ...) — НЕ
+        # (x_train, y_train, x_test, y_test). Старый вызов молча клал X_val в feature_names,
+        # и scorer считал utility на ОБУЧАЮЩЕЙ выборке. Тестовые данные scorer'а — X_val/y_val.
+        val_dataset = Dataset(X_val_t, y_val_1d, feature_names=feature_names)
 
         # Создание скорера
         # По возможности используем ту же метрику, что выбрана в settings.py.
@@ -692,10 +691,8 @@ class InfluenceMethods:
         y_train_series = pd.Series(y_train_val_space, name="y")
         y_val_series = pd.Series(y_val_val_space, name="y")
 
-        try:
-            train_dataset = Dataset(X_train_df, y_train_series, X_val_df, y_val_series)
-        except Exception as e:
-            train_dataset = Dataset(X_train_t, y_train_val_space.reshape(-1, 1), X_val_t, y_val_val_space.reshape(-1, 1))
+        # [AUDIT-FIX B10] обучающие данные для valuation (сигнатура pyDVL: x, y, feature_names...)
+        train_dataset = Dataset(np.asarray(X_train_t), np.asarray(y_train_val_space), feature_names=list(X_train_df.columns))
         self.failed_methods = {}
 
         scores = {}

@@ -46,3 +46,7 @@
 ## B9. Гонка глобального RNG torch при параллельном переобучении (найдено в фазе графиков)
 
 pyDVL переобучает модели в потоках (`parallel_config(backend="threading", n_jobs=N_JOBS)`), а `refit_seed` выставлялся через глобальный `torch.manual_seed`. Потоки перемешивали инициализацию и dropout друг друга, поэтому `u(D∖i)` считался на «случайной» модели: pyDVL-LOO совпадал с ручным точным LOO лишь в 25% точек (Spearman −0.11). Исправление: `models/torch_models.py` — refit с `refit_seed` выполняется под `threading.RLock` внутри `torch.random.fork_rng`, создание модели (инициализация весов тоже тратит RNG) — под тем же lock. После исправления значения utility при параллельном и последовательном расчёте совпадают точно. Тест: `test_parallel_refit_is_deterministic`.
+
+## B10. Utility pyDVL считался на обучающей выборке (найдено в фазе графиков)
+
+`influence/methods.py` создавал `Dataset(X_train, y_train, X_val, y_val)`, но в pyDVL 0.10 сигнатура — `Dataset(x, y, feature_names, target_names, ...)`. DataFrame `X_val` молча принимался как список имён признаков (итерация по DataFrame даёт имена колонок), поэтому `SupervisedScorer(test_data=...)` оценивал модель на ОБУЧАЮЩИХ данных. Для LOO/Shapley это означает «насколько точка помогает запомнить саму себя»: точка с перевёрнутой меткой получает положительную ценность — отсюда AUC детекции шума LOO < 0.5. Исправление: `Dataset(X_val, y_val)` как тестовые данные scorer'а и `Dataset(X_train, y_train)` для valuation. Тест: `test_valuation_scorer_uses_validation_data`.
