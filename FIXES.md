@@ -42,3 +42,7 @@
 ## Что не менялось
 - Ограничения методики (M4 — influence при удалении до 90%, M5 — Hessian-influence на MLP с маленьким демпфированием, M6 — `sample_size_percentage=10`) не исправлялись: это вопросы постановки, а не багов. Подробнее в AUDIT.md.
 - Микросервис и legacy-скрипты (`zillow/*`, `scripts/*`) не трогались. В `microservice/results_format.py` осталась функция `_apply_denoise`, которая сдвигает кривые методов. По умолчанию она выключена (`active: False`), но включается через API (`denoise_active`). Для честных графиков её не включать.
+
+## B9. Гонка глобального RNG torch при параллельном переобучении (найдено в фазе графиков)
+
+pyDVL переобучает модели в потоках (`parallel_config(backend="threading", n_jobs=N_JOBS)`), а `refit_seed` выставлялся через глобальный `torch.manual_seed`. Потоки перемешивали инициализацию и dropout друг друга, поэтому `u(D∖i)` считался на «случайной» модели: pyDVL-LOO совпадал с ручным точным LOO лишь в 25% точек (Spearman −0.11). Исправление: `models/torch_models.py` — refit с `refit_seed` выполняется под `threading.RLock` внутри `torch.random.fork_rng`, создание модели (инициализация весов тоже тратит RNG) — под тем же lock. После исправления значения utility при параллельном и последовательном расчёте совпадают точно. Тест: `test_parallel_refit_is_deterministic`.

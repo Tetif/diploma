@@ -225,3 +225,34 @@ def test_dataset_leaks_removed():
     assert 'Global_intensity' not in ElectricConfig.numeric_columns
     assert ZillowConfig.train_target_clip_quantiles == (0.005, 0.995)
     assert 'target.clip(' not in inspect.getsource(ZillowConfig.load_data)
+
+
+def test_parallel_refit_is_deterministic():
+    """[B9] Одновременные fit() в потоках с одинаковым refit_seed дают одинаковые модели."""
+    import threading
+    from models.factory import ModelFactory
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(120, 5)).astype(np.float32)
+    y = (X[:, 0] > 0).astype(int)
+    mp = dict(model_type='pytorch', model_architecture='simple', input_size=5, device='cpu',
+              task_type='binary_classification',
+              simple={'layers': [16], 'dropout': 0.2, 'learning_rate': 0.01})
+    ref = ModelFactory.create_model(**mp)
+    ref.default_epochs = 30
+    ref.fit(X, y)
+    expected = ref.predict(X)
+    models = []
+
+    def work():  # создание (тратит RNG) и обучение — одновременно в разных потоках
+        m = ModelFactory.create_model(**mp)
+        m.default_epochs = 30
+        m.fit(X, y)
+        models.append(m)
+
+    th = [threading.Thread(target=work) for _ in range(6)]
+    for t in th:
+        t.start()
+    for t in th:
+        t.join()
+    for m in models:
+        assert np.allclose(m.predict(X), expected, atol=1e-6)

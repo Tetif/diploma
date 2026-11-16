@@ -1,9 +1,15 @@
+import threading
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from .base import BaseModel
 from config.settings import DEVICE
+
+# [AUDIT-FIX B9] pyDVL обучает модели параллельно (joblib threading). Глобальный RNG torch
+# общий для потоков: без блокировки manual_seed+init+dropout разных потоков перемешиваются,
+# refit_seed перестаёт давать детерминизм и LOO превращается в шум.
+_REFIT_LOCK = threading.RLock()
 
 # Default PyTorch model configurations
 DEFAULT_PYTORCH_PARAMS = {
@@ -197,7 +203,8 @@ class PyTorchModelWrapper(BaseModel):
         kwargs = dict(kwargs)
         self.default_epochs = int(kwargs.pop('default_epochs', None) or self.DEFAULT_FIT_EPOCHS)
         self.refit_seed = kwargs.pop('refit_seed', None)
-        self._build(input_size, model_architecture, device, task_type, pos_weight, kwargs)
+        with _REFIT_LOCK:  # [B9] init тоже тратит глобальный RNG — не даём ему вклиниться в чужой seeded refit
+            self._build(input_size, model_architecture, device, task_type, pos_weight, kwargs)
 
     def _build(self, input_size, model_architecture, device, task_type, pos_weight, kwargs):
         kwargs = dict(kwargs)
@@ -278,8 +285,16 @@ class PyTorchModelWrapper(BaseModel):
                          self.default_epochs шагов (так вызывает pyDVL на подмножествах).
         """
         if epochs is None:
+            if self.refit_seed is not None:
+                # [B9] детерминированный refit: сериализуем и изолируем глобальный RNG
+                with _REFIT_LOCK, torch.random.fork_rng(devices=[]):
+                    self._rebuild_from_scratch()
+                    return self._train_steps(X, y, self.default_epochs)
             self._rebuild_from_scratch()
             epochs = self.default_epochs
+        return self._train_steps(X, y, epochs)
+
+    def _train_steps(self, X, y, epochs):
         X_tensor = torch.FloatTensor(np.asarray(X, dtype=np.float32)).to(self.device)
         self.model.train()
         total_loss = 0
