@@ -23,6 +23,7 @@ import argparse
 import csv
 import os
 import sys
+import textwrap
 from collections import defaultdict
 
 import matplotlib
@@ -77,20 +78,28 @@ def metric_label(r):
 
 
 def finish(fig, path, title, note=None):
+    width_chars = int(fig.get_figwidth() * 7.5)
+    title = "\n".join(textwrap.wrap(title, width_chars)) if len(title) > width_chars else title
     fig.suptitle(title, x=0.01, ha="left", fontsize=13, fontweight="bold", color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
     if note:
-        fig.text(0.01, 0.005, note, ha="left", va="bottom", fontsize=8.5, color=INK2, wrap=True)
-    fig.tight_layout(rect=(0, 0.04 if note else 0, 1, 0.95))
-    fig.savefig(path, dpi=200)
+        # below the axes (outside the canvas); bbox_inches="tight" keeps it in the PNG
+        note = "\n".join(textwrap.wrap(note, int(fig.get_figwidth() * 13)))
+        fig.text(0.01, -0.01, note, ha="left", va="top", fontsize=8.5, color=INK2)
+    fig.savefig(path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print("wrote", path)
 
 
-def legend(ax, methods, extra=(), loc="best"):
+def legend(ax, methods, extra=(), loc="best", outside=False):
     h = [plt.Line2D([0], [0], color=COLORS.get(m, INK2), lw=2.2, marker="o", ms=5, label=LABELS.get(m, m))
          for m in methods]
     h += list(extra)
-    ax.legend(handles=h, loc=loc, fontsize=8.5, labelcolor=INK2, handlelength=1.8)
+    if outside:
+        ax.legend(handles=h, loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=8.5, labelcolor=INK2,
+                  handlelength=1.8)
+    else:
+        ax.legend(handles=h, loc=loc, fontsize=8.5, labelcolor=INK2, handlelength=1.8)
 
 
 def grid(n, rows=1, w=5.2, h=3.9):
@@ -160,7 +169,7 @@ def fig_curves(sd, strategies, fname, title, outdir, note):
             if col == len(dss) - 1 and row == 0:
                 extra = [plt.Line2D([0], [0], color=MUTED, lw=2, ls=(0, (4, 2)), label="random removal"),
                          plt.Line2D([0], [0], color=INK2, lw=1.1, ls="--", label="full data")]
-                legend(ax, shown, extra)
+                legend(ax, shown, extra, outside=True)
     finish(fig, os.path.join(outdir, fname), title, note)
 
 
@@ -214,7 +223,9 @@ def fig_found(sd, outdir):
         ax.set_ylabel("share of corrupted points found")
         ax.set_ylim(0, 1.02)
         ax.set_title(ds)
-        legend(ax, shown, [plt.Line2D([0], [0], color=MUTED, ls="--", lw=1.2, label="random order")], loc="lower right")
+        if ds == dss[-1]:
+            legend(ax, shown, [plt.Line2D([0], [0], color=MUTED, ls="--", lw=1.2, label="random order")],
+                   outside=True)
     finish(fig, os.path.join(outdir, "4_found_at.png"), "How many corrupted points are among the lowest-valued?",
            note="Line = mean over seeds, band = min..max over seeds. 10 % of the training labels are corrupted, "
                 "so the ideal curve reaches 1.0 at 10 %.")
