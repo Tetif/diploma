@@ -89,6 +89,9 @@ def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tu
     if method == 'CatBoostLFC':
         if trainer.model_type != 'catboost' or trainer.spec.distill:
             raise NotApplicable('CatBoost LossFunctionChange needs the CatBoost model itself')
+        if sp.is_classification and len(np.unique(sp.y_train)) > 2:
+            # CatBoost get_object_importance: 'MultiClass is not supported yet in ostr mode'
+            raise NotApplicable('CatBoost LossFunctionChange does not support MultiClass (covertype)')
         from experiments.catboost_importance import compute_catboost_object_importance
         pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
         v = compute_catboost_object_importance(pipe, sp.X_train, sp.y_train, sp.X_val, sp.y_val, sp.task_type,
