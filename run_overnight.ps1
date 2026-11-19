@@ -1,10 +1,11 @@
-﻿<#
+<#
 Overnight run: main study -> sensitivity sweep -> secondary studies (models, distillation, convex,
 systematic noise, transfer) -> plots. Resumable: just start it again after an interruption,
 finished (study, dataset, method, seed) runs are skipped.
 
   powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1
-  powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1 -NJobs 6 -Threads 2 -SkipSweep
+  powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1 -Workers 6 -ThreadsPerWorker 2
+  powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1 -Workers 1 -NJobs 6 -Threads 2 -SkipSweep
   powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1 -SkipMain -Sections models,transfer
 
 Skip flags: -SkipMain, -SkipExt (all secondary studies), -SkipSweep, -SkipPlots;
@@ -17,6 +18,10 @@ if DIPLOMA_WEBHOOK_URL is not set nothing is sent; a failing webhook never stops
   $env:DIPLOMA_WEBHOOK_KEY    = "<secret>"        # sent as a header
   $env:DIPLOMA_WEBHOOK_HEADER = "Authorization"   # header name; default "Authorization: Bearer <key>",
                                                   # any other name gets the raw key as its value
+Parallel mode [AUDIT-FIX P12]: -Workers N worker processes x -ThreadsPerWorker M threads (pyDVL n_jobs = torch/BLAS
+threads = M per worker). Default 6 x 2 for an i7-12700H (14 cores / 20 threads, 16 GB); -Workers 1 = the old
+sequential run with -NJobs / -Threads. A new unit starts only while >= -MinFreeMB MB of RAM are free.
+Worker logs: results\_logs\worker-<pid>.log (lines also prefixed [w<pid>] in the main log).
 Other knobs: -NJobs (parallel pyDVL refits), -Threads (torch/BLAS threads per process), -Device cpu|cuda.
 Logs: run_logs\overnight-<timestamp>.log (+ results\_logs\*.log written by run_study.py).
 #>
@@ -52,7 +57,12 @@ function Step([string]$name, [string[]]$cmdArgs) {
         Tee-Object -FilePath $log -Append
 }
 
-$common = @("--n-jobs", "$NJobs", "--threads", "$Threads", "--device", $Device)
+if ($Workers -gt 1) {
+    $common = @("--workers", "$Workers", "--n-jobs", "$ThreadsPerWorker", "--threads", "$ThreadsPerWorker",
+                "--min-free-mb", "$MinFreeMB", "--device", $Device)
+} else {
+    $common = @("--n-jobs", "$NJobs", "--threads", "$Threads", "--device", $Device)
+}
 if (-not $SkipMain)  { Step "main study" (@("run_study.py", "main") + $common) }
 if (-not $SkipSweep) { Step "sensitivity sweep" (@("run_study.py", "sweep") + $common) }
 if (-not $SkipExt) {
