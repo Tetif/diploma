@@ -32,6 +32,18 @@ DEFAULT_MODEL_PARAMS = {
 
 CLASSIFICATION_TASKS = ('binary_classification', 'multiclass_classification')
 
+
+def _sklearn_style_proba(model, X):
+    """[AUDIT-FIX D1] predict_proba with one column per class 0..max(classes_) (a class absent from a
+    small training subset gets probability 0 instead of shifting the columns)."""
+    p = np.asarray(model.predict_proba(X), dtype=np.float64)
+    classes = np.asarray(getattr(model, 'classes_', np.arange(p.shape[1]))).astype(int)
+    if p.ndim == 2 and len(classes) == p.shape[1] and np.array_equal(classes, np.arange(len(classes))):
+        return p
+    out = np.zeros((p.shape[0], int(classes.max()) + 1))
+    out[:, classes] = p
+    return out
+
 class LightGBMModel(BaseModel):
     def __init__(self, params=None, task_type='regression', **kwargs):
         super().__init__()
@@ -134,7 +146,11 @@ class XGBoostModel(BaseModel):
 
     def fit(self, X, y, **kwargs):
         if self.task_type in CLASSIFICATION_TASKS:
-            self.model = xgb.XGBClassifier(**self.params)
+            params = dict(self.params)
+            # [AUDIT-FIX D1] multi:softmax has no probabilities; softprob gives the same predict() labels
+            if params.get('objective') == 'multi:softmax':
+                params['objective'] = 'multi:softprob'
+            self.model = xgb.XGBClassifier(**params)
         else:
             self.model = xgb.XGBRegressor(**self.params)
         self.model.fit(X, y)
@@ -142,6 +158,12 @@ class XGBoostModel(BaseModel):
 
     def predict(self, X):
         return self.model.predict(X)
+
+    def predict_proba(self, X):
+        """[AUDIT-FIX D1] Was missing: distillation used hard 0/1 teacher labels, LossHigh used 0/1 loss."""
+        if self.task_type not in CLASSIFICATION_TASKS:
+            raise AttributeError("predict_proba is only defined for classification tasks")
+        return _sklearn_style_proba(self.model, X)
 
     def get_params(self, deep=True):
         """[AUDIT-FIX B1] Аргументы конструктора (те же объекты) — sklearn.clone() сохраняет task_type."""
@@ -188,6 +210,12 @@ class RandomForestModel(BaseModel):
     def predict(self, X):
         return np.asarray(self.model.predict(X))
 
+    def predict_proba(self, X):
+        """[AUDIT-FIX D1] Was missing (see XGBoostModel.predict_proba)."""
+        if self.task_type not in CLASSIFICATION_TASKS:
+            raise AttributeError("predict_proba is only defined for classification tasks")
+        return _sklearn_style_proba(self.model, X)
+
     def get_params(self, deep=True):
         """[AUDIT-FIX B1] Аргументы конструктора (те же объекты) — sklearn.clone() сохраняет task_type."""
         return {'params': self._params_arg, 'task_type': self.task_type}
@@ -231,7 +259,14 @@ class CatBoostModel(BaseModel):
         return 0.0
 
     def predict(self, X):
-        return np.asarray(self.model.predict(X))
+        p = np.asarray(self.model.predict(X))
+        return p.ravel() if p.ndim == 2 and p.shape[1] == 1 else p
+
+    def predict_proba(self, X):
+        """[AUDIT-FIX D1] Was missing (see XGBoostModel.predict_proba)."""
+        if self.task_type not in CLASSIFICATION_TASKS:
+            raise AttributeError("predict_proba is only defined for classification tasks")
+        return _sklearn_style_proba(self.model, X)
 
     def get_params(self, deep=True):
         """[AUDIT-FIX B1] Аргументы конструктора (те же объекты) — sklearn.clone() сохраняет task_type."""
@@ -245,4 +280,4 @@ class CatBoostModel(BaseModel):
             self._params_arg = new
             self.params = dict(new) if isinstance(new, dict) else self.params
         self.params.update(params)
-        return self
+        return self

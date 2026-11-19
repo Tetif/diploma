@@ -56,6 +56,7 @@ class ModelFactory:
                     temperature=temperature,
                     num_classes=num_classes,
                     task_type=task_type,
+                    batch_size=model_params.get('batch_size'),
                 )
             return LightGBMModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'xgboost':
@@ -72,6 +73,7 @@ class ModelFactory:
                     temperature=temperature,
                     num_classes=num_classes,
                     task_type=task_type,
+                    batch_size=model_params.get('batch_size'),
                 )
             return XGBoostModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'random_forest':
@@ -88,6 +90,7 @@ class ModelFactory:
                     temperature=temperature,
                     num_classes=num_classes,
                     task_type=task_type,
+                    batch_size=model_params.get('batch_size'),
                 )
             return RandomForestModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'catboost':
@@ -104,6 +107,7 @@ class ModelFactory:
                     temperature=temperature,
                     num_classes=num_classes,
                     task_type=task_type,
+                    batch_size=model_params.get('batch_size'),
                 )
             return CatBoostModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'pytorch':
@@ -138,6 +142,8 @@ class ModelFactory:
                 int(model_params.get('valuation_epochs') or EXPERIMENT_CONFIG.get('valuation_epochs', 200)),
             )
             torch_kwargs.setdefault('refit_seed', RANDOM_STATE)
+            if model_params.get('batch_size'):      # [AUDIT-FIX B11] mini-batch epochs (None = legacy)
+                torch_kwargs.setdefault('batch_size', int(model_params['batch_size']))
             return PyTorchModelWrapper(
                 input_size,
                 device=device,
@@ -159,6 +165,9 @@ class ModelFactory:
             'student_architecture', 'available_metrics', 'num_class',
             # передаются в DistilledModelWrapper.fit(), не в конструкторы деревьев
             'distillation_patience', 'distillation_min_delta',
+            # [AUDIT-FIX D3] torch-only / experiment keys: CatBoost and sklearn RandomForest reject unknown
+            # constructor kwargs (TypeError), LightGBM / XGBoost only warn
+            'valuation_epochs', 'pos_weight', 'num_classes', 'batch_size',
         }
         
         # For tree-based models, also exclude PyTorch-specific params
@@ -205,4 +214,4 @@ class ModelFactory:
         if dataset_name is not None:
             from config.settings import get_model_config as settings_get_model_config
             return settings_get_model_config(dataset_name, model_type)
-        return {}
+        return {}

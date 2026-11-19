@@ -203,6 +203,12 @@ class PyTorchModelWrapper(BaseModel):
         kwargs = dict(kwargs)
         self.default_epochs = int(kwargs.pop('default_epochs', None) or self.DEFAULT_FIT_EPOCHS)
         self.refit_seed = kwargs.pop('refit_seed', None)
+        # [AUDIT-FIX B11] None (legacy): one "epoch" = ONE full-batch Adam step. With the ReduceLROnPlateau
+        # (patience 10) and early stopping (patience 70) of train_and_evaluate, both counted in these steps,
+        # the MLPs stopped after ~30-50 effective steps (best step 27 on adult). An int = shuffled
+        # mini-batches of that size per epoch (a real epoch), also for pyDVL refits (default_epochs epochs).
+        bs = kwargs.pop('batch_size', None)
+        self.batch_size = int(bs) if bs else None
         with _REFIT_LOCK:  # [B9] init тоже тратит глобальный RNG — не даём ему вклиниться в чужой seeded refit
             self._build(input_size, model_architecture, device, task_type, pos_weight, kwargs)
 
@@ -274,6 +280,7 @@ class PyTorchModelWrapper(BaseModel):
         p = dict(self._ctor_params)
         p.pop('default_epochs', None)
         p.pop('refit_seed', None)
+        p.pop('batch_size', None)
         self._build(p.pop('input_size'), p.pop('model_architecture'), p.pop('device'),
                     p.pop('task_type'), p.pop('pos_weight'), p)
 
@@ -297,26 +304,27 @@ class PyTorchModelWrapper(BaseModel):
     def _train_steps(self, X, y, epochs):
         X_tensor = torch.FloatTensor(np.asarray(X, dtype=np.float32)).to(self.device)
         self.model.train()
-        total_loss = 0
         if self.task_type == 'multiclass_classification':
             y_tensor = torch.LongTensor(np.asarray(y).astype(np.int64).ravel()).to(self.device)
-            for _ in range(epochs):
-                self.optimizer.zero_grad()
-                output = self.model(X_tensor)
-                loss = self.criterion(output, y_tensor)
-                loss.backward()
-                self.optimizer.step()
-                total_loss += loss.item()
         else:
             y_tensor = torch.FloatTensor(np.asarray(y, dtype=np.float32)).reshape(-1, 1).to(self.device)
-            for _ in range(epochs):
+        n = X_tensor.shape[0]
+        total_loss, n_steps = 0.0, 0
+        for _ in range(epochs):
+            if self.batch_size and n > self.batch_size:
+                perm = torch.randperm(n, device=self.device)
+                batches = [perm[i:i + self.batch_size] for i in range(0, n, self.batch_size)]
+            else:
+                batches = [None]
+            for b in batches:
+                xb, yb = (X_tensor, y_tensor) if b is None else (X_tensor[b], y_tensor[b])
                 self.optimizer.zero_grad()
-                output = self.model(X_tensor)
-                loss = self.criterion(output, y_tensor)
+                loss = self.criterion(self.model(xb), yb)
                 loss.backward()
                 self.optimizer.step()
                 total_loss += loss.item()
-        return total_loss / epochs
+                n_steps += 1
+        return total_loss / max(n_steps, 1)
 
     def predict(self, X):
         self.model.eval()
@@ -363,8 +371,10 @@ class DistilledModelWrapper(BaseModel):
     """Обертка для дистилляции не-нейросетевых моделей в нейросеть"""
 
     def __init__(self, base_model, input_size, device='cpu', model_architecture='simple',
-                 distillation_epochs=50, temperature=2.0, num_classes=1, task_type='regression'):
+                 distillation_epochs=50, temperature=2.0, num_classes=1, task_type='regression',
+                 batch_size=None):
         super().__init__()
+        self.batch_size = int(batch_size) if batch_size else None   # [AUDIT-FIX B11] mini-batch epochs
         self.base_model = base_model
         self.input_size = input_size
         self.device = device
@@ -375,9 +385,14 @@ class DistilledModelWrapper(BaseModel):
         self.task_type = task_type
         self.is_distilled = False
 
-        if model_architecture == 'improved':
+        self._build_student()
+
+    def _build_student(self):
+        """Fresh student network + optimizer (also used to restart training on every fit, [AUDIT-FIX D4])."""
+        input_size, num_classes, device = self.input_size, self.num_classes, self.device
+        if self.model_architecture == 'improved':
             self.student_model = ImprovedNN(input_size, output_size=num_classes).to(device)
-        elif model_architecture == 'cnn_small':
+        elif self.model_architecture == 'cnn_small':
             self.student_model = SmallImageCNN(
                 input_size, num_classes=num_classes, dropout=DEFAULT_CNN_SMALL_PARAMS['dropout'],
                 base_channels=DEFAULT_CNN_SMALL_PARAMS['base_channels']
@@ -387,9 +402,9 @@ class DistilledModelWrapper(BaseModel):
 
         self.optimizer = optim.Adam(self.student_model.parameters(),
                                     lr=DEFAULT_PYTORCH_PARAMS['simple']['learning_rate'])
-        if task_type == 'binary_classification':
+        if self.task_type == 'binary_classification':
             self.criterion = nn.BCEWithLogitsLoss()
-        elif task_type == 'multiclass_classification':
+        elif self.task_type == 'multiclass_classification':
             self.criterion = nn.CrossEntropyLoss()
         else:
             self.criterion = nn.MSELoss()
@@ -404,14 +419,27 @@ class DistilledModelWrapper(BaseModel):
         arr = arr / row_sums
         return np.clip(arr, 1e-6, 1.0 - 1e-6)
 
+    def _soften(self, probs):
+        """[AUDIT-FIX D2] Teacher probabilities at temperature T: softmax(log p / T).
+
+        The student is trained on softmax(z / T) and used at T = 1, so it must match the *tempered*
+        teacher; matching the raw teacher made the student's T = 1 probabilities p_teacher^T
+        (over-confident; argmax unchanged, but the per-sample loss / gradients used by influence and
+        LossHigh were distorted)."""
+        T = max(float(self.temperature), 1e-6)
+        logp = np.log(np.clip(np.asarray(probs, dtype=np.float64), 1e-12, 1.0)) / T
+        logp -= logp.max(axis=1, keepdims=True)
+        e = np.exp(logp)
+        return (e / e.sum(axis=1, keepdims=True)).astype(np.float32)
+
     def _teacher_targets(self, X):
         if self.task_type == 'multiclass_classification':
             if hasattr(self.base_model, 'predict_proba'):
-                return self._safe_probs(self.base_model.predict_proba(X))
+                return self._soften(self._safe_probs(self.base_model.predict_proba(X)))
             raw = np.asarray(self.base_model.predict(X))
             # LightGBM multiclass: predict даёт матрицу (N, C), не индексы классов.
             if raw.ndim == 2 and raw.shape[1] > 1:
-                return self._safe_probs(raw)
+                return self._soften(self._safe_probs(raw))
             preds = raw.reshape(-1)
             idx = preds.astype(np.int64)
             idx = np.clip(idx, 0, max(int(self.num_classes) - 1, 0))
@@ -444,6 +472,10 @@ class DistilledModelWrapper(BaseModel):
             fit_kwargs['epochs'] = epochs
 
         self.base_model.fit(X, y, **fit_kwargs)
+        if self.is_distilled:
+            # [AUDIT-FIX D4] a second fit() used to continue from the previous student weights and Adam state
+            self._build_student()
+            self.is_distilled = False
 
         # Получаем "мягкие" предсказания от базовой модели
         debug_print("Generating teacher predictions for distillation...")
@@ -472,20 +504,26 @@ class DistilledModelWrapper(BaseModel):
         T = max(float(self.temperature), 1e-6)
         last_loss = None
 
+        n = X_tensor.shape[0]
         for epoch in range(self.distillation_epochs):
-            self.optimizer.zero_grad()
-            student_output = self.student_model(X_tensor)
-            if self.task_type == 'multiclass_classification':
-                # Classical KD for multiclass: KL(student/T || teacher_probs) * T^2.
-                student_log_probs = torch.log_softmax(student_output / T, dim=1)
-                loss = torch.nn.functional.kl_div(
-                    student_log_probs, teacher_tensor, reduction='batchmean'
-                ) * (T * T)
+            if self.batch_size and n > self.batch_size:
+                perm = torch.randperm(n, device=X_tensor.device)
+                batches = [perm[i:i + self.batch_size] for i in range(0, n, self.batch_size)]
             else:
-                loss = self.criterion(student_output, teacher_tensor)
-            loss.backward()
-            self.optimizer.step()
-            last_loss = loss.item()
+                batches = [None]
+            for b in batches:
+                xb, tb = (X_tensor, teacher_tensor) if b is None else (X_tensor[b], teacher_tensor[b])
+                self.optimizer.zero_grad()
+                student_output = self.student_model(xb)
+                if self.task_type == 'multiclass_classification':
+                    # Classical KD for multiclass: KL(teacher_T || softmax(student/T)) * T^2.
+                    student_log_probs = torch.log_softmax(student_output / T, dim=1)
+                    loss = torch.nn.functional.kl_div(student_log_probs, tb, reduction='batchmean') * (T * T)
+                else:
+                    loss = self.criterion(student_output, tb)
+                loss.backward()
+                self.optimizer.step()
+                last_loss = loss.item()
 
             with torch.no_grad():
                 if X_val_tensor is not None and teacher_val_tensor is not None:
@@ -576,7 +614,8 @@ class DistilledModelWrapper(BaseModel):
             'distillation_epochs': self.distillation_epochs,
             'temperature': self.temperature,
             'num_classes': self.num_classes,  # [AUDIT-FIX B1] раньше терялся при clone()
-            'task_type': self.task_type
+            'task_type': self.task_type,
+            'batch_size': self.batch_size,
         }
 
     def set_params(self, **params):
