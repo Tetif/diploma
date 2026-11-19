@@ -20,12 +20,13 @@ VALUATION = ['LOO', 'TMCShapley']                 # retrain-based (pyDVL), cost 
 CLOSED_FORM = ['KNNShapley', 'DataOOB']           # cheap, model-agnostic baselines
 INFLUENCE = ['Influence', 'LissaInfluence']       # Hessian-based, need a torch model
 BASELINES = ['LossHigh', 'random']
-MODEL_SPECIFIC = ['CatBoostLFC']                  # CatBoost object importance (LossFunctionChange)
+MODEL_SPECIFIC = ['CatBoostLFC', 'BoostIn']       # CatBoost LossFunctionChange; BoostIn (GBDT, [AUDIT-FIX P10])
+GBDT_MODELS = ('lightgbm', 'xgboost', 'catboost')
 ALL_METHODS = VALUATION + CLOSED_FORM + INFLUENCE + BASELINES + MODEL_SPECIFIC
 METHOD_LABELS = {
     'LOO': 'LOO', 'TMCShapley': 'TMC-Shapley', 'KNNShapley': 'KNN-Shapley', 'DataOOB': 'Data-OOB',
     'Influence': 'Influence (direct)', 'LissaInfluence': 'Influence (LiSSA)', 'LossHigh': 'Loss (high first)',
-    'random': 'random', 'CatBoostLFC': 'CatBoost LFC',
+    'random': 'random', 'CatBoostLFC': 'CatBoost LFC', 'BoostIn': 'BoostIn',
 }
 
 MAIN_METHODS = ['LOO', 'KNNShapley', 'DataOOB', 'Influence', 'LissaInfluence', 'LossHigh', 'random']
@@ -53,6 +54,8 @@ class RunSpec:
     knn_k: int = 5
     oob_estimators: int = 200
     sample_scale: float = 1.0                 # multiplies the dataset's n_train (sweep: 0.1 / 0.3 / 1.0)
+    distill_influence_target: str = 'true_labels'  # [AUDIT-FIX P9] distill: influence of the student w.r.t.
+                                              # 'true_labels' | 'teacher' (its own training targets)
     tree_class_weight: Optional[str] = 'balanced'  # [AUDIT-FIX P8] classification trees (also distillation
                                               # teachers): 'balanced' (like the MLP's pos_weight) | None
 
@@ -126,7 +129,9 @@ def methods_for(model_type: str, task_type: str, methods: List[str], distill: bo
     for m in methods:
         if m in INFLUENCE and model_type != 'pytorch' and not distill:
             continue
-        if m == 'CatBoostLFC' and (model_type != 'catboost' or distill):
+        if m == 'CatBoostLFC' and model_type != 'catboost':     # distill: LFC of the CatBoost teacher [P11]
+            continue
+        if m == 'BoostIn' and model_type not in GBDT_MODELS:
             continue
         out.append(m)
     return out
@@ -148,7 +153,8 @@ def models_specs() -> List[Tuple[RunSpec, List[str], List[str]]]:
     """[(spec, methods, datasets)]"""
     out = []
     for m in TREE_MODELS:
-        meths = TREE_METHODS + (['CatBoostLFC'] if m == 'catboost' else [])
+        meths = TREE_METHODS + (['CatBoostLFC'] if m == 'catboost' else []) \
+            + (['BoostIn'] if m in ('lightgbm', 'catboost') else [])      # [AUDIT-FIX P10]
         for task, kw in (('clean', dict(task='clean')), ('noise10', _NOISE10)):
             out.append((RunSpec(f'models-{m}-{task}', model_type=m, **kw), meths, list(EXT_DATASETS)))
     return out
@@ -171,11 +177,21 @@ def convex_specs():
 # 3. distillation: tree teacher -> MLP student; influence through the student
 DISTILL_TEACHERS = ['lightgbm', 'catboost']
 DISTILL_METHODS = ['Influence', 'LissaInfluence', 'LossHigh', 'random']
+# [AUDIT-FIX P9-P11] direct baselines on the same noisy split, computed on the TEACHER (removal curves of every
+# method retrain teacher + student, see protocol._curve); influence of the student also w.r.t. the teacher.
+DISTILL_DIRECT = ['BoostIn', 'CatBoostLFC', 'DataOOB']
+DISTILL_TEACHER_TARGET_METHODS = ['Influence', 'LissaInfluence']
 
 
 def distill_specs():
-    return [(RunSpec(f'distill-{t}-noise10', model_type=t, distill=True, **_NOISE10), list(DISTILL_METHODS),
-             list(EXT_DATASETS)) for t in DISTILL_TEACHERS]
+    out = []
+    for t in DISTILL_TEACHERS:
+        out.append((RunSpec(f'distill-{t}-noise10', model_type=t, distill=True, **_NOISE10),
+                    list(DISTILL_METHODS) + methods_for(t, '', DISTILL_DIRECT, distill=True), list(EXT_DATASETS)))
+        out.append((RunSpec(f'distill-{t}-noise10-tgtteacher', model_type=t, distill=True,
+                            distill_influence_target='teacher', **_NOISE10),
+                    list(DISTILL_TEACHER_TARGET_METHODS), list(EXT_DATASETS)))
+    return out
 
 
 # 5. systematic vs random noise at 5 / 10 / 20 % (MLP; random 10 % = main study "noise10")

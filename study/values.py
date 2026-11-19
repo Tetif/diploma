@@ -5,7 +5,14 @@
 * KNNShapley - pyDVL ``KNNShapleyValuation`` (exact, closed form; classification only).
 * DataOOB - pyDVL ``DataOOBValuation`` on a bagged decision-tree ensemble (Kwon & Zou, 2023).
 * LossHigh - minus the per-sample training loss of the full model (high loss = low value).
-* CatBoostLFC - CatBoost object importance (LossFunctionChange) of the CatBoost model itself.
+* CatBoostLFC - CatBoost object importance (LossFunctionChange) of the CatBoost model itself
+  (distill-*: of the CatBoost TEACHER, [AUDIT-FIX P11]).
+* BoostIn     - BoostIn (Brophy et al. 2023, package tree_influence) of the GBDT itself (distill-*: of the
+  teacher), see experiments/boostin.py [AUDIT-FIX P10].
+
+Distillation ([AUDIT-FIX P9]): spec.distill_influence_target = 'true_labels' (influence of the student w.r.t.
+the observed, possibly noisy labels) | 'teacher' (w.r.t. the student's own training targets = the teacher's
+soft outputs, with the student's training loss: BCE to p, T^2 * soft-CE(z/T, p_T) = KL + const, MSE).
 """
 from __future__ import annotations
 
@@ -21,6 +28,35 @@ PYDVL_VIA_PROJECT = ('LOO', 'TMCShapley', 'Influence', 'LissaInfluence')
 def _lissa_scale(dataset: str) -> float:
     import config.settings as S
     return float(S.get_influence_params(dataset)['lissa_params']['scale'])
+
+
+class TemperedSoftCE:
+    """[AUDIT-FIX P9] T^2 * CE(softmax(z / T), target): the multiclass distillation loss of the student
+    (KL(p_T || softmax(z/T)) * T^2 up to a constant in the parameters). target = class probabilities (N, C)
+    or class indices (N,) (validation side, true labels)."""
+
+    def __init__(self, T: float):
+        self.T = max(float(T), 1e-6)
+
+    def __call__(self, out, target):
+        import torch
+        return torch.nn.functional.cross_entropy(out / self.T, target) * (self.T * self.T)
+
+
+def _teacher_influence_setup(im, trainer, model, Xtr_t):
+    """Teacher-target influence for a distilled student: targets = exactly the student's training targets."""
+    import torch
+    targets = np.asarray(model._teacher_targets(Xtr_t), dtype=np.float32)
+    task = trainer.split.task_type
+    if task == 'binary_classification':
+        im.criterion_override, loss = torch.nn.BCEWithLogitsLoss(), 'BCEWithLogits(student logit, p_teacher)'
+    elif task == 'multiclass_classification':
+        T = float(getattr(model, 'temperature', 1.0))
+        im.criterion_override, loss = TemperedSoftCE(T), f'T^2*CE(z/T, softened p_teacher), T={T:g}'
+    else:
+        im.criterion_override, loss = torch.nn.MSELoss(), 'MSE(student, teacher prediction) (scaled y)'
+    im.train_target_override = targets
+    return {'distill_influence_target': 'teacher', 'train_loss': loss, 'val_target': 'true_labels'}
 
 
 class NotApplicable(Exception):
@@ -77,6 +113,13 @@ def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tu
         pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
         im = InfluenceMethods(None, dataset_config=sp.cfg)
         im.seed = int(seed)                     # [AUDIT-FIX P2/P4] TMC permutations, LiSSA batch shuffling
+        target = getattr(spec, 'distill_influence_target', 'true_labels')
+        if method in ('Influence', 'LissaInfluence') and spec.distill:
+            if target == 'teacher':
+                info['influence_target'] = _teacher_influence_setup(im, trainer, model,
+                                                                    _dense(trainer.pre.transform(sp.X_train)))
+            else:
+                info['influence_target'] = {'distill_influence_target': 'true_labels', 'val_target': 'true_labels'}
         if spec.damping is not None:
             # [AUDIT-FIX P1] damping sweep: lambda_eff = regularization (+ scale*0) for BOTH Direct and LiSSA.
             # Before, LiSSA kept dampen from the dataset config, so lambda_eff = reg + scale*dampen = 3..12.
@@ -108,17 +151,36 @@ def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tu
         pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
         return -np.asarray(compute_per_sample_loss(pipe, sp.X_train, sp.y_train, sp.task_type), float), info
 
+    tree = getattr(model, 'base_model', model) if trainer.spec.distill else model   # distill: the teacher
     if method == 'CatBoostLFC':
-        if trainer.model_type != 'catboost' or trainer.spec.distill:
-            raise NotApplicable('CatBoost LossFunctionChange needs the CatBoost model itself')
+        if trainer.model_type != 'catboost':
+            raise NotApplicable('CatBoost LossFunctionChange needs a CatBoost model (or CatBoost teacher)')
         if sp.is_classification and len(np.unique(sp.y_train)) > 2:
             # CatBoost get_object_importance: 'MultiClass is not supported yet in ostr mode'
             raise NotApplicable('CatBoost LossFunctionChange does not support MultiClass (covertype)')
+        if trainer.spec.distill and not sp.is_classification:
+            raise NotApplicable('distill + regression: the teacher is fit on scaled y (LFC expects raw y)')
         from experiments.catboost_importance import compute_catboost_object_importance
-        pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
+        pipe = Pipeline([('preproc', trainer.pre), ('model', tree)])
         v = compute_catboost_object_importance(pipe, sp.X_train, sp.y_train, sp.X_val, sp.y_val, sp.task_type,
                                                'catboost')
+        info['explained_model'] = 'teacher' if trainer.spec.distill else 'model'
         return np.asarray(v, dtype=float), info
+
+    if method == 'BoostIn':     # [AUDIT-FIX P10]
+        from experiments.boostin import BoostInNotApplicable, boostin_values
+        ytr_b, yval_b = np.asarray(sp.y_train), np.asarray(sp.y_val)
+        if not sp.is_classification and y_scaler is not None and trainer.spec.distill:
+            ytr_b = y_scaler.transform(ytr_b.reshape(-1, 1).astype(float)).ravel()
+            yval_b = y_scaler.transform(yval_b.reshape(-1, 1).astype(float)).ravel()
+        try:
+            v, binfo = boostin_values(tree, _dense(trainer.pre.transform(sp.X_train)), ytr_b,
+                                      _dense(trainer.pre.transform(sp.X_val)), yval_b, sp.task_type)
+        except BoostInNotApplicable as e:
+            raise NotApplicable(str(e))
+        info.update(binfo)
+        info['explained_model'] = 'teacher' if trainer.spec.distill else 'model'
+        return v, info
 
     from joblib import parallel_config
     from pydvl.valuation.dataset import Dataset

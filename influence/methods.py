@@ -131,6 +131,12 @@ class InfluenceMethods:
         self.seed = None
         # [AUDIT-FIX P1] effective Hessian damping per influence method (written to results.json by the study)
         self.effective_damping = {}
+        # [AUDIT-FIX P9] distillation: influence of the student on its OWN training targets (teacher outputs).
+        # train_target_override = targets in the model's output space (binary p (N,1), multiclass soft (N,C),
+        # regression teacher prediction (N,1)); criterion_override = the student's training loss.
+        # The validation (test) side keeps the true labels.
+        self.train_target_override = None
+        self.criterion_override = None
 
     def _is_classification(self):
         tt = getattr(self.dataset_config, 'task_type', None) if self.dataset_config else None
@@ -206,6 +212,8 @@ class InfluenceMethods:
         For multiclass with K output logits (last Linear out_features == K),
         uses CrossEntropyLoss; if K <= 1, falls back to MSELoss (legacy single-head).
         """
+        if self.criterion_override is not None:     # [AUDIT-FIX P9]
+            return self.criterion_override
         influence_model = self._extract_torch_model(model_for_criterion)
         out_dim = self._last_linear_out_features(influence_model)
 
@@ -743,6 +751,12 @@ class InfluenceMethods:
                     else:
                         _y_train_t = torch.tensor(y_train_arr_scaled.reshape(-1, 1), dtype=torch.float32)
                         _y_val_t = torch.tensor(y_val_arr_scaled.reshape(-1, 1), dtype=torch.float32)
+
+                    if self.train_target_override is not None:      # [AUDIT-FIX P9] teacher targets
+                        _tt = np.asarray(self.train_target_override, dtype=np.float32)
+                        _y_train_t = torch.tensor(_tt.reshape(-1, 1) if _tt.ndim == 1 else _tt, dtype=torch.float32)
+                        if len(_y_train_t) != len(X_train_t):
+                            raise ValueError('train_target_override length != n_train')
 
                     # Use scaled y for influence methods so gradients match the trained model
                     train_loader = DataLoader(
