@@ -1,9 +1,15 @@
 <#
-Overnight run: main study -> sensitivity sweep -> plots. Resumable: just start it again after an
-interruption, finished (study, dataset, method, seed) runs are skipped.
+Overnight run: main study -> secondary studies (models, distillation, convex, systematic noise,
+transfer) -> sensitivity sweep -> plots. Resumable: just start it again after an interruption,
+finished (study, dataset, method, seed) runs are skipped.
 
   powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1
   powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1 -NJobs 6 -Threads 2 -SkipSweep
+  powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1 -SkipMain -Sections models,transfer
+
+Skip flags: -SkipMain, -SkipExt (all secondary studies), -SkipSweep, -SkipPlots;
+-Sections <list> runs only these secondary sections (models, distill, convex, noise, transfer).
+Transfer reads the values of the main study (noise10) and of models / distill, so run it after them.
 
 Optional environment variables (webhook after every finished block, at the end and on a crash;
 if DIPLOMA_WEBHOOK_URL is not set nothing is sent; a failing webhook never stops the run, timeout 10 s):
@@ -19,7 +25,10 @@ param(
     [int]$Threads = 2,
     [string]$Device = "cpu",
     [switch]$SkipMain,
-    [switch]$SkipSweep
+    [switch]$SkipExt,
+    [switch]$SkipSweep,
+    [switch]$SkipPlots,
+    [string[]]$Sections = @()
 )
 $ErrorActionPreference = "Continue"
 Set-Location -Path $PSScriptRoot
@@ -45,9 +54,17 @@ function Step([string]$name, [string[]]$cmdArgs) {
 
 $common = @("--n-jobs", "$NJobs", "--threads", "$Threads", "--device", $Device)
 if (-not $SkipMain)  { Step "main study" (@("run_study.py", "main") + $common) }
+if (-not $SkipExt) {
+    $extArgs = @("run_study.py", "ext") + $common
+    $secs = @($Sections | ForEach-Object { $_ -split "," } | Where-Object { $_ })
+    if ($secs.Count -gt 0) { $extArgs += @("--sections") + $secs }
+    Step "secondary studies" $extArgs
+}
 if (-not $SkipSweep) { Step "sensitivity sweep" (@("run_study.py", "sweep") + $common) }
-Step "plots" @("plot_results.py", "--root", "results", "--out", "assets")
-Step "paired stats" @("paired_stats.py", "--root", "results", "--out", "assets")
+if (-not $SkipPlots) {
+    Step "plots" @("plot_results.py", "--root", "results", "--out", "assets")
+    Step "paired stats" @("paired_stats.py", "--root", "results", "--out", "assets")
+}
 Step "status" @("run_study.py", "status")
 [void][Win32.Power]::SetThreadExecutionState([uint32]"0x80000000")
 "done. log: $log" | Tee-Object -FilePath $log -Append
