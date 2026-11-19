@@ -27,14 +27,14 @@
 
 `run_study.py ext` (3 сида) пишет графики 8–13 рядом с основным исследованием.
 
-- **Модели.** Те же задачи на LightGBM, XGBoost, CatBoost и Random Forest (для CatBoost ещё LossFunctionChange). Data-OOB и KNN-Shapley от модели не зависят (свой bagging-ансамбль деревьев / kNN): их ценности и AUC одинаковы во всех `models-*`, от модели зависит только переобучение после удаления.
+- **Модели.** Те же задачи на LightGBM, XGBoost, CatBoost и Random Forest; в классификации деревья (и учителя дистилляции) обучаются со сбалансированными весами классов, как MLP с `pos_weight` (бинарная: `scale_pos_weight = neg/pos`; `spec.tree_class_weight`, фактические веса — `class_weighting` в results.json) (для CatBoost ещё LossFunctionChange). Data-OOB и KNN-Shapley от модели не зависят (свой bagging-ансамбль деревьев / kNN): их ценности и AUC одинаковы во всех `models-*`, от модели зависит только переобучение после удаления.
 - **Выпуклый influence.** Логистическая / линейная регрессия против MLP, damping 1e-6 … 1 (и для Direct, и для LiSSA λ_eff = damping: в этих прогонах LiSSA идёт с dampen = 0; при 100 итерациях LiSSA не различает λ ниже ~scale/100).
-- **Дистилляция.** Учитель-дерево → ученик-MLP; ценности считаются по ученику.
+- **Дистилляция.** Учитель-дерево → ученик-MLP; ценности считаются по ученику. Качество ученика против учителя и диагностика — `docs/DISTILL_REVIEW.md`; в `_baseline` пишутся fidelity (holdout и train), R² ученик↔учитель, эпоха остановки, ROC-AUC/logloss учителя.
 - **Перенос.** Ценности с одной модели, удаление и переобучение на другой.
 - **Шум.** Случайный против систематического (путаемая пара классов / сдвиг y в подгруппе) при 5/10/20 %.
 - **Цена.** Время расчёта ценностей против detection AUC (пик RAM — в `cost.csv`).
 
-Пилот в `results/pilot_ext` (1–2 сида, у части прогонов `n_train=400`) — сигнал, не вывод:
+Для классификации во всех results.json есть пороговонезависимые `holdout_roc_auc` и `holdout_logloss` полной модели (F1 при пороге 0.5 сильно зависит от калибровки). Пилот в `results/pilot_ext` (до весов классов у деревьев) (1–2 сида, у части прогонов `n_train=400`) — сигнал, не вывод:
 
 - Поиск 10 % испорченных меток: high loss даёт AUC 0.86–0.99 почти на всех моделях, Data-OOB (не зависит от модели, один расчёт на датасет) — того же уровня; LOO ≈ 0.5. У XGBoost high loss на wine/housing слабый (0.57/0.64). CatBoost LFC средний (0.56–0.82) и на covertype недоступен (MultiClass).
 - На выпуклой модели Influence стабильнее, чем на MLP (adult 0.70–0.80 против скачков 0.43–0.74), но всё равно ниже high loss (~0.88–0.99).
@@ -46,7 +46,7 @@
 ## Запуск
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests -q          # 41 тест, ~20 с (включая e2e-смоук)
+.venv\Scripts\python.exe -m pytest tests -q          # 46 тестов, ~20 с (включая e2e-смоук)
 .venv\Scripts\python.exe run_study.py pilot          # ~10 мин, results/pilot (только для проверки)
 powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1   # main + sweep + ext + графики; см. оценку ниже
 .venv\Scripts\python.exe run_study.py status         # что готово / что упало
