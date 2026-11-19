@@ -10,7 +10,7 @@ import pandas as pd
 from tqdm import tqdm
 
 # Ensure project root is on path (same pattern as plot_removal_from_weights.py)
-_project_root = Path(__file__).resolve().parent.parent
+_project_root = Path(__file__).resolve().parents[2]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 

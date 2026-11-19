@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 API = "http://localhost:8000"
 REPORT = REPO / "docs" / "INFLUENCE_REMOVAL_INVESTIGATION_REPORT.md"
 ANALYZE = REPO / ".cursor/skills/diploma-experiment-review/scripts/analyze_experiment_dir.py"

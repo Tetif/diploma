@@ -3,7 +3,7 @@ numpy>=1.23.0
 scikit-learn>=1.2.0
 matplotlib>=3.6.0
 torch>=1.13.0
-pydvl>=0.8.0
+pydvl>=0.10,<0.11  # code uses the 0.10 valuation API
 lightgbm>=3.3.0
 xgboost>=1.7.0
 catboost>=1.0.0
@@ -12,26 +12,7 @@ scipy>=1.9.0
 dask[complete]>=2023.1.0
 zarr>=3.0.0
 tqdm>=4.60.0
-
-# FastAPI & Uvicorn
-fastapi>=0.104.1
-uvicorn[standard]>=0.24.0
-pydantic>=2.5.0
-
-# Streamlit
-streamlit>=1.28.0
-streamlit-option-menu>=0.3.6
-streamlit-autorefresh>=1.0.1
-
-# Plotting & Visualization
-plotly>=5.17.0
-seaborn>=0.13.0
-
-# HTTP & Networking
-requests>=2.31.0
-httpx>=0.25.0
-
-# Utilities
 psutil>=5.9.0
-python-dotenv>=1.0.0
-pyyaml>=6.0.1
+pytest>=7.0
+
+# Web UI / API (optional): pip install -r microservice/requirements_microservice.txt

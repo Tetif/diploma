@@ -378,7 +378,7 @@ def fmt_markdown(method_cols: List[str], rows: List[Dict[str, str]]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    default_root = Path(__file__).resolve().parent.parent / "experiment_logs"
+    default_root = Path(__file__).resolve().parents[2] / "experiment_logs"
     parser.add_argument(
         "--logs-root",
         type=Path,

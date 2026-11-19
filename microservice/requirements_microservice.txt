@@ -34,4 +34,4 @@ pyyaml==6.0.1
 tqdm==4.66.1
 
 # For influence functions (from main project)
-pydvl==0.7.0
+pydvl==0.10.0

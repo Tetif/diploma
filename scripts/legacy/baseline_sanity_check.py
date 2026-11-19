@@ -11,7 +11,7 @@ from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error
 from sklearn.preprocessing import StandardScaler
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from config import DatasetRegistry  # noqa: E402

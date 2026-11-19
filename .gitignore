@@ -54,3 +54,8 @@ Thumbs.db
 # Legacy / local-only paths
 /zillow/
 /zillow/zillow_main_new_models.py
+
+# New study pipeline (run_study.py): pilot runs and overnight logs stay local
+results/pilot*/
+run_logs/
+_distill_run.log

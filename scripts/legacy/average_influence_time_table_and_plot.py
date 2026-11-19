@@ -296,7 +296,7 @@ def main() -> None:
     p.add_argument(
         "--out-dir",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "experiment_logs",
+        default=Path(__file__).resolve().parents[2] / "experiment_logs",
         help="куда сохранить CSV/LaTeX/PNG",
     )
     args = p.parse_args()
