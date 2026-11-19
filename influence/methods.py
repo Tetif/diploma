@@ -35,6 +35,9 @@ from config.settings import (
 from .scorers import ScorerFactory, constant_predictor_score
 
 
+LISSA_MAXITER = 100  # LiSSA iterations (unchanged); recorded in results.json by the study
+
+
 class SafeModelWrapper:
     """
     Wrapper around sklearn/LightGBM models to handle edge cases in valuation methods.
@@ -121,6 +124,13 @@ class InfluenceMethods:
         self.dataset_config = dataset_config
         self.methods = {}
         self._is_multiclass = False
+        # [AUDIT-FIX P1] LiSSA dampen override (None = dataset config). The damping sweep sets 0.0 so that the
+        # effective damping lambda_eff = regularization + scale*dampen equals the swept regularization.
+        self.lissa_dampen_override = None
+        # [AUDIT-FIX P2/P4] seed for TMC-Shapley permutations and LiSSA minibatch shuffling (None = unseeded)
+        self.seed = None
+        # [AUDIT-FIX P1] effective Hessian damping per influence method (written to results.json by the study)
+        self.effective_damping = {}
 
     def _is_classification(self):
         tt = getattr(self.dataset_config, 'task_type', None) if self.dataset_config else None
@@ -306,7 +316,8 @@ class InfluenceMethods:
         # Проверяем, что модель обучена перед созданием scorer
         if hasattr(model_wrapper.model, 'estimators_'):
             if model_wrapper.model.estimators_ is None or len(model_wrapper.model.estimators_) == 0:
-                self.logger.log_message("WARNING: RandomForest model not properly fitted before creating scorer!")
+                if self.logger:  # [AUDIT-FIX P5] logger может быть None (study)
+                    self.logger.log_message("WARNING: RandomForest model not properly fitted before creating scorer!")
                 # Попытка переобучить модель на тренировочных данных
                 if self.logger:
                     self.logger.log_message("Attempting to refit model on training data...")
@@ -421,6 +432,7 @@ class InfluenceMethods:
                         self.methods['TMCShapley'] = TMCShapleyValuation(
                             utility=utility,
                             is_done=MaxUpdates(PYDVL_CONFIG['tmc_shapley_params']['n_samples']),
+                            seed=self.seed,  # [AUDIT-FIX P2] воспроизводимые перестановки
                             progress=True
                         )
                         if self.logger:
@@ -434,9 +446,10 @@ class InfluenceMethods:
                         continue
 
                     elif method_name == 'DataOOB':
-                        # DataOOBValuation требует BaggingModel, сложно настроить для произвольных моделей
+                        # [AUDIT-FIX P6] В этом (main.py) пути Data-OOB не считается; в study он реализован в
+                        # study/values.py на собственном bagging-ансамбле деревьев (model-agnostic, Kwon & Zou 2023).
                         if self.logger:
-                            self.logger.log_message("DataOOB skipped - requires BaggingModel setup")
+                            self.logger.log_message("DataOOB skipped here (implemented in study/values.py)")
                         continue
 
                     elif method_name == 'LeastCore':
@@ -472,6 +485,7 @@ class InfluenceMethods:
 
                         criterion = self._resolve_criterion(_inner_model_for_criterion)
 
+                        self.effective_damping['Influence'] = float(influence_params['regularization'])  # [P1]
                         self.methods['Influence'] = DirectInfluence(
                             influence_model,
                             criterion,
@@ -567,14 +581,19 @@ class InfluenceMethods:
 
                         criterion = self._resolve_criterion(_inner_model_for_criterion)
 
+                        _scale = float(influence_params['lissa_params']['scale'])
+                        _dampen = (float(self.lissa_dampen_override) if self.lissa_dampen_override is not None
+                                   else float(influence_params['lissa_params']['damping']))
+                        # [AUDIT-FIX P1] fixed point of pyDVL LiSSA: (H + (reg + scale*dampen) I)^-1 g
+                        self.effective_damping['LissaInfluence'] = float(influence_params['regularization']) + _scale * _dampen
                         self.methods['LissaInfluence'] = LissaInfluence(
                             influence_model,
                             criterion,
-                            scale=influence_params['lissa_params']['scale'],
-                            dampen=influence_params['lissa_params']['damping'],
+                            scale=_scale,
+                            dampen=_dampen,
                             regularization=influence_params['regularization'],
                             rtol=0.1,
-                            maxiter=100,
+                            maxiter=LISSA_MAXITER,
                             progress=True
                         )
                         if self.logger:
@@ -749,6 +768,11 @@ class InfluenceMethods:
                         except Exception as e:
                             debug_print(f"Failed to log loader/model diagnostics: {e}")
 
+                    # [AUDIT-FIX P4] LiSSA перемешивает мини-батчи глобальным RNG torch: фиксируем его на время
+                    # fit + influence_factors (CPU-генератор, его использует DataLoader) и затем восстанавливаем.
+                    _rng_state = torch.random.get_rng_state() if self.seed is not None else None
+                    if _rng_state is not None:
+                        torch.manual_seed(int(self.seed))
                     infl = method.fit(train_loader)
                     if self.logger:
                         self.logger.log_message("Influence: DirectInfluence.fit completed")
@@ -757,6 +781,8 @@ class InfluenceMethods:
                         torch.tensor(X_val_t, dtype=torch.float32, device=_inf_device),
                         _y_val_t.to(_inf_device)
                     )
+                    if _rng_state is not None:
+                        torch.random.set_rng_state(_rng_state)
 
                     # Diagnostics for influence factors
                     try:
@@ -856,7 +882,11 @@ class InfluenceMethods:
                         self.logger.log_message(f"[DEBUG] {name}: train_dataset type = {type(train_dataset)}")
                         self.logger.log_message(f"[DEBUG] {name}: method type = {type(method)}")
                     
-                    with parallel_config(backend="threading", n_jobs=N_JOBS):
+                    # [AUDIT-FIX P2] TMC: with several workers the set/number of permutations that finish before
+                    # MaxUpdates stops depends on thread timing (joblib cancels the rest) -> not reproducible even
+                    # with a seed. Seeded TMC runs sequentially; torch refits are serialised by _REFIT_LOCK anyway.
+                    _n_jobs = 1 if (name == 'TMCShapley' and self.seed is not None) else N_JOBS
+                    with parallel_config(backend="threading", n_jobs=_n_jobs):
                         try:
                             if self.logger:
                                 self.logger.log_message(f"[DEBUG] {name}: Calling method.fit()...")

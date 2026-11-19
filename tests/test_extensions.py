@@ -55,6 +55,15 @@ def test_extension_blocks_and_transfer(tmp_path, monkeypatch):
         r = io.load_json(io.run_dir(tmp_path, st, 'wine', m, 0) / 'results.json')
         assert r['status'] == 'ok', (st, m, r.get('error'))
         assert 'detection' in r and r['timing']['values_s'] >= 0 and 'values_peak_rss_mb' in r['timing']
+    # [AUDIT-FIX P1] damping sweep: lambda_eff = swept damping for both Direct and LiSSA (LiSSA dampen = 0)
+    for m in ('Influence', 'LissaInfluence'):
+        r = io.load_json(io.run_dir(tmp_path, 'lin', 'wine', m, 0) / 'results.json')
+        assert r['effective_damping'] == pytest.approx(1e-2), m
+    r = io.load_json(io.run_dir(tmp_path, 'lin', 'wine', 'LissaInfluence', 0) / 'results.json')
+    assert r['lissa']['dampen'] == 0.0 and r['lissa']['implicit_damping_floor'] > 0
+    # default (non-sweep) settings unchanged: Direct lambda = dataset regularization
+    r = io.load_json(io.run_dir(tmp_path, 'src', 'wine', 'Influence', 0) / 'results.json')
+    assert r['effective_damping'] == pytest.approx(S.get_influence_params('wine')['regularization'])
     b = io.load_json(io.run_dir(tmp_path, 'dist', 'wine', '_baseline', 0) / 'results.json')
     assert b['model'] == 'distill-lightgbm' and 'teacher_metric' in b and b['fidelity'] > 0.3
     assert io.load_json(io.run_dir(tmp_path, 'lin', 'wine', '_baseline', 0) / 'results.json')['model'] == 'linear'
@@ -117,3 +126,32 @@ def test_catboost_object_importance_sign():
     is_noisy = np.zeros(300, bool)
     is_noisy[noisy] = True
     assert v[is_noisy].mean() < v[~is_noisy].mean()
+
+
+@pytest.mark.skipif(not HAS_WINE, reason='wine dataset not available')
+def test_tmc_shapley_is_seeded_and_lissa_default_damping(tmp_path, monkeypatch):
+    """[AUDIT-FIX P2] TMC permutations follow the run seed (reproducible); budget is written to results.json.
+    [AUDIT-FIX P1] outside the damping sweep LiSSA keeps the dataset dampen: lambda_eff = reg + scale*dampen."""
+    import config.settings as S
+    from study import io
+    from study.config import DatasetSpec, RunSpec
+    from study.protocol import run_seed
+    monkeypatch.setattr(S, 'DEVICE', 'cpu')
+    monkeypatch.chdir(ROOT)
+    ds = DatasetSpec('wine', n_train=40, max_holdout=100)
+    spec = RunSpec('tmc', task='clean', fracs=(10,), strategies=('lowest',), n_epochs=10, valuation_epochs=2,
+                   tmc_permutations=2)
+    vals = []
+    for k in range(2):
+        root = tmp_path / f'r{k}'
+        run_seed(root, spec, ds, 0, ['TMCShapley'] + (['LissaInfluence'] if k == 0 else []), lambda *_: None)
+        r = io.load_json(io.run_dir(root, 'tmc', 'wine', 'TMCShapley', 0) / 'results.json')
+        assert r['status'] == 'ok', r.get('error')
+        assert r['tmc']['permutations'] == 2 and r['tmc']['seed'] == 0
+        vals.append(np.load(io.run_dir(root, 'tmc', 'wine', 'TMCShapley', 0) / 'values.npy'))
+    assert np.array_equal(vals[0], vals[1])
+    r = io.load_json(io.run_dir(tmp_path / 'r0', 'tmc', 'wine', 'LissaInfluence', 0) / 'results.json')
+    p = S.get_influence_params('wine')
+    assert r['status'] == 'ok', r.get('error')
+    assert r['effective_damping'] == pytest.approx(p['regularization'] + p['lissa_params']['scale']
+                                                   * p['lissa_params']['damping'])

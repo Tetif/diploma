@@ -18,6 +18,11 @@ from sklearn.pipeline import Pipeline
 PYDVL_VIA_PROJECT = ('LOO', 'TMCShapley', 'Influence', 'LissaInfluence')
 
 
+def _lissa_scale(dataset: str) -> float:
+    import config.settings as S
+    return float(S.get_influence_params(dataset)['lissa_params']['scale'])
+
+
 class NotApplicable(Exception):
     """Method does not apply to this dataset / model (stored as status 'skipped')."""
 
@@ -65,11 +70,17 @@ def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tu
     n = len(sp.X_train)
     info: dict = {}
     if method in PYDVL_VIA_PROJECT:
-        from influence.methods import InfluenceMethods
+        from influence.methods import InfluenceMethods, LISSA_MAXITER
+        import config.settings as S
         if method in ('Influence', 'LissaInfluence') and not trainer.is_torch:
             raise NotApplicable(f'{method} needs a torch model (MLP, linear or distilled student)')
         pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
         im = InfluenceMethods(None, dataset_config=sp.cfg)
+        im.seed = int(seed)                     # [AUDIT-FIX P2/P4] TMC permutations, LiSSA batch shuffling
+        if spec.damping is not None:
+            # [AUDIT-FIX P1] damping sweep: lambda_eff = regularization (+ scale*0) for BOTH Direct and LiSSA.
+            # Before, LiSSA kept dampen from the dataset config, so lambda_eff = reg + scale*dampen = 3..12.
+            im.lissa_dampen_override = 0.0
         with _overrides(sp.dataset, spec):
             meths, _ = im.setup_methods(pipe, sp.X_train, sp.y_train, sp.X_val, sp.y_val, trainer.pre,
                                         methods_to_use=[method], y_scaler=y_scaler)
@@ -79,6 +90,17 @@ def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tu
                                           pipe, y_scaler=y_scaler)
         if method in im.failed_methods:
             raise RuntimeError(f'{method}: {im.failed_methods[method]}')
+        if method in im.effective_damping:      # [AUDIT-FIX P1]
+            info['effective_damping'] = im.effective_damping[method]
+            if method == 'LissaInfluence':
+                lp = S.get_influence_params(sp.dataset)['lissa_params'] if spec.damping is None else None
+                info['lissa'] = {'scale': _lissa_scale(sp.dataset), 'maxiter': LISSA_MAXITER,
+                                 'dampen': 0.0 if spec.damping is not None else float(lp['damping']),
+                                 # truncated Neumann series (maxiter terms) cannot resolve damping below ~scale/maxiter
+                                 'implicit_damping_floor': _lissa_scale(sp.dataset) / LISSA_MAXITER}
+        if method == 'TMCShapley':              # [AUDIT-FIX P2]
+            info['tmc'] = {'permutations': int(spec.tmc_permutations), 'seed': int(seed),
+                           'truncation': 'RelativeTruncation(rtol=0.01, burn_in_fraction=0.4)'}
         return np.asarray(scores[method], dtype=float), info
 
     if method == 'LossHigh':
