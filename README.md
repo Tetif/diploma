@@ -47,16 +47,18 @@
 ## Запуск
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests -q          # 51 тест, ~20 с (включая e2e-смоук)
+.venv\Scripts\python.exe -m pytest tests -q          # 55 тестов, ~1 мин (включая e2e-смоук)
 .venv\Scripts\python.exe run_study.py pilot          # ~10 мин, results/pilot (только для проверки)
-powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1   # main + sweep + ext + графики; см. оценку ниже
+powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1   # main + sweep + ext + графики; 6 процессов x 2 потока (P12)
+powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1 -Workers 6 -ThreadsPerWorker 2   # то же явно; -Workers 1 = старый последовательный режим
+.venv\Scripts\python.exe run_study.py status                 # прогресс: done/failed по исследованиям + выполняемые сейчас единицы
 .venv\Scripts\python.exe run_study.py status         # что готово / что упало
 .venv\Scripts\python.exe plot_results.py             # results/ -> assets/*.png, summary.md
 .venv\Scripts\python.exe paired_stats.py             # парные тесты против random -> assets/paired_stats.md
 ```
 
 Прогон можно прервать и запустить снова: готовые `results/<study>/<dataset>/<method>/seed<k>/results.json`
-пропускаются. Оценка времени: `run_study.py estimate` и `run_study.py estimate-ext` (сейчас main 7.5 ч + sweep 3.2 ч + ext 22.2 ч ≈ 33 ч при 5/3/3 сидах). Секция `models` в ext одна занимает ~18.6 ч из‑за LOO на деревьях. За одну ночь реалистично `run_overnight.ps1 -SkipExt` (~10.8 ч: main + sweep + графики) или только расширения без деревьев: `run_study.py ext --sections distill convex noise transfer` (~3.6 ч).
+пропускаются. Параллельный режим (P12, --workers N): единицы работы (study, dataset, seed) с вынесенными в отдельные единицы LOO / TMC / Influence / LiSSA раздаются spawn-процессам, длинные первыми; фазы main → sweep → ext → transfer сохраняются; результаты совпадают с последовательным режимом; логи воркеров в esults/_logs/worker-*.log. Оценка при 6×2 на i7-12700H: ~12–15 ч вместо ~34 ч (нижняя граница — самая длинная единица, LOO CatBoost на covertype, ~3 ч). Последовательная оценка: `run_study.py estimate` и `run_study.py estimate-ext` (сейчас main 7.5 ч + sweep 3.2 ч + ext 22.2 ч ≈ 33 ч при 5/3/3 сидах). Секция `models` в ext одна занимает ~18.6 ч из‑за LOO на деревьях. За одну ночь реалистично `run_overnight.ps1 -SkipExt` (~10.8 ч: main + sweep + графики) или только расширения без деревьев: `run_study.py ext --sections distill convex noise transfer` (~3.6 ч).
 Необязательные уведомления о ходе прогона: переменные `DIPLOMA_WEBHOOK_URL`, `DIPLOMA_WEBHOOK_KEY`,
 `DIPLOMA_WEBHOOK_HEADER` (см. шапку `run_overnight.ps1`).
 
