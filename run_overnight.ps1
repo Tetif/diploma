@@ -1,6 +1,6 @@
-<#
-Overnight run: main study -> secondary studies (models, distillation, convex, systematic noise,
-transfer) -> sensitivity sweep -> plots. Resumable: just start it again after an interruption,
+﻿<#
+Overnight run: main study -> sensitivity sweep -> secondary studies (models, distillation, convex,
+systematic noise, transfer) -> plots. Resumable: just start it again after an interruption,
 finished (study, dataset, method, seed) runs are skipped.
 
   powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1
@@ -54,13 +54,13 @@ function Step([string]$name, [string[]]$cmdArgs) {
 
 $common = @("--n-jobs", "$NJobs", "--threads", "$Threads", "--device", $Device)
 if (-not $SkipMain)  { Step "main study" (@("run_study.py", "main") + $common) }
+if (-not $SkipSweep) { Step "sensitivity sweep" (@("run_study.py", "sweep") + $common) }
 if (-not $SkipExt) {
     $extArgs = @("run_study.py", "ext") + $common
     $secs = @($Sections | ForEach-Object { $_ -split "," } | Where-Object { $_ })
     if ($secs.Count -gt 0) { $extArgs += @("--sections") + $secs }
     Step "secondary studies" $extArgs
 }
-if (-not $SkipSweep) { Step "sensitivity sweep" (@("run_study.py", "sweep") + $common) }
 if (-not $SkipPlots) {
     Step "plots" @("plot_results.py", "--root", "results", "--out", "assets")
     Step "paired stats" @("paired_stats.py", "--root", "results", "--out", "assets")
