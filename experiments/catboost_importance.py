@@ -36,6 +36,9 @@ def compute_catboost_object_importance(pipeline, X_train, y_train, X_val, y_val,
     Sign convention (same as pyDVL influence):
       positive = helpful (removing increases loss),
       negative = harmful  (removing decreases loss).
+    CatBoost itself returns the opposite (positive = the object increases the validation loss), so the
+    scores are negated below ([AUDIT-FIX B13]; before, flipped labels got the highest values, detection
+    AUC 0.19 on adult with 10 % label noise).
     """
     import catboost as cb
 
@@ -110,6 +113,8 @@ def compute_catboost_object_importance(pipeline, X_train, y_train, X_val, y_val,
                 importance = importance[:n_train]
             else:
                 importance = np.pad(importance, (0, n_train - importance.shape[0]))
+
+    importance = -importance   # [AUDIT-FIX B13] CatBoost: positive = harmful -> our convention
 
     if logger:
         logger.log_message(

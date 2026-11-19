@@ -66,3 +66,54 @@ def test_extension_blocks_and_transfer(tmp_path, monkeypatch):
         r = io.load_json(io.run_dir(tmp_path, 'transfer-lightgbm', 'wine', name, 0) / 'results.json')
         assert r['status'] == 'ok' and r['curves'], name
     assert not (io.run_dir(tmp_path, 'transfer-lightgbm', 'wine', 'pytorch.LOO', 0) / 'results.json').exists()
+
+
+
+def test_lightgbm_fits_are_serialised():
+    """[AUDIT-FIX B12] concurrent LightGBM fits from joblib threads deadlocked (LOO on adult): fits hold a lock."""
+    import threading
+    import numpy as np
+    from models import tree_models
+    assert isinstance(tree_models._LGB_LOCK, type(threading.Lock()))
+    rng = np.random.default_rng(0)
+    X, y = rng.normal(size=(200, 4)), rng.normal(size=200)
+    out = []
+
+    def fit():
+        m = tree_models.LightGBMModel(params={'n_estimators': 20, 'verbose': -1, 'n_jobs': 1})
+        m.fit(X, y)
+        out.append(m.predict(X[:5]).shape)
+    ts = [threading.Thread(target=fit) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join(60) for t in ts]
+    assert out == [(5,)] * 4
+
+
+def test_catboost_object_importance_sign():
+    """[AUDIT-FIX B13] CatBoost LossFunctionChange is positive for harmful objects; we return higher = more
+    useful, so flipped labels must get lower values than clean ones."""
+    import numpy as np
+    import catboost as cb
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import FunctionTransformer
+    from experiments.catboost_importance import compute_catboost_object_importance
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(400, 3))
+    y = (X[:, 0] + 0.3 * X[:, 1] > 0).astype(int)
+    noisy = rng.choice(300, 30, replace=False)
+    y_tr = y[:300].copy()
+    y_tr[noisy] = 1 - y_tr[noisy]
+
+    class _W:
+        model = None
+    w = _W()
+    w.model = cb.CatBoostClassifier(iterations=100, depth=4, verbose=False, random_seed=0,
+                                    allow_writing_files=False).fit(X[:300], y_tr)
+    pipe = Pipeline([('preproc', FunctionTransformer()), ('model', FunctionTransformer())])
+    pipe.named_steps['preproc'].fit(X[:300])
+    pipe.steps[1] = ('model', w)
+    v = compute_catboost_object_importance(pipe, X[:300], y_tr, X[300:], y[300:], 'binary_classification',
+                                           'catboost')
+    is_noisy = np.zeros(300, bool)
+    is_noisy[noisy] = True
+    assert v[is_noisy].mean() < v[~is_noisy].mean()

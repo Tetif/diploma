@@ -1,3 +1,5 @@
+import threading
+
 import lightgbm as lgb
 import xgboost as xgb
 import catboost as cb
@@ -5,6 +7,11 @@ import numpy as np
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from .base import BaseModel
 from config.settings import RANDOM_STATE
+
+# [AUDIT-FIX B12] LightGBM fits started concurrently from joblib threads (pyDVL LOO with the threading
+# backend) deadlocked on Windows (all threads idle in Dataset construction / Booster.update). LightGBM fits are
+# serialised with this lock; they are cheap, other models keep the parallel refits.
+_LGB_LOCK = threading.Lock()
 
 # Default configurations for models when no explicit params provided
 DEFAULT_MODEL_PARAMS = {
@@ -67,6 +74,10 @@ class LightGBMModel(BaseModel):
                 self.params[key] = kwargs[key]
 
     def fit(self, X, y, X_val=None, y_val=None, **kwargs):
+        with _LGB_LOCK:     # [AUDIT-FIX B12]
+            return self._fit(X, y, X_val, y_val, **kwargs)
+
+    def _fit(self, X, y, X_val=None, y_val=None, **kwargs):
         train_data = lgb.Dataset(X, label=y)
 
         # n_estimators from config overrides the default num_boost_round
