@@ -28,9 +28,19 @@ def _default(o):
 def save_json(path: Path, data: dict) -> None:
     """Atomic write (tmp + replace) so an interrupted run never leaves a half-written file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix('.json.tmp')
+    # [AUDIT-FIX P12] per-process tmp name (parallel workers may write the same _baseline); on Windows
+    # os.replace fails while another process reads the target -> short retries
+    tmp = path.with_suffix(f'.json.{os.getpid()}.tmp')
     tmp.write_text(json.dumps(data, indent=1, default=_default, ensure_ascii=False), encoding='utf-8')
-    os.replace(tmp, path)
+    for i in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if i == 19:
+                raise
+            import time
+            time.sleep(0.05 * (i + 1))
 
 
 def load_json(path: Path) -> Optional[dict]:

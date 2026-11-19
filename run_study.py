@@ -46,6 +46,11 @@ def _parse():
     ap.add_argument('--threads', type=int, default=4, help='torch / BLAS threads')
     ap.add_argument('--device', default='cpu', help='cpu is faster for these tiny MLPs')
     ap.add_argument('--no-retry-failed', action='store_true')
+    ap.add_argument('--workers', type=int, default=1,
+                    help='[P12] worker processes (1 = sequential, the old behaviour); each gets --threads threads '
+                         'and --n-jobs pyDVL jobs')
+    ap.add_argument('--min-free-mb', type=float, default=1500.0,
+                    help='[P12] start a new unit only while this much RAM is free (or nothing runs)')
     return ap.parse_args()
 
 
@@ -156,6 +161,24 @@ class _Progress:
                      'failed_methods': fails[:50], 'error': error}, self.log)
 
 
+def _execute(a, root, log, prog, blocks):
+    """[AUDIT-FIX P12] blocks = [(phase, kind, spec, ds, seed, methods | transfer sources)].
+    workers == 1: the old sequential loop in the given order; otherwise study.parallel (phases in order)."""
+    retry = not a.no_retry_failed
+    if getattr(a, 'workers', 1) <= 1:
+        for phase, kind, spec, ds, seed, ms in blocks:
+            if kind == 'transfer':
+                prog.run_transfer(spec, ds, seed, ms, retry)
+            else:
+                prog.run(spec, ds, seed, ms, retry)
+        return None
+    from study.parallel import run_parallel
+    stats = run_parallel(root, log, prog, blocks, a.workers, a.threads, a.n_jobs, a.device, retry, a.min_free_mb,
+                         repo=str(ROOT))
+    log(f'parallel: {stats}')
+    return stats
+
+
 def _sel(items, chosen):
     """Keep items (or DatasetSpecs, by .name) that are in ``chosen``; everything if nothing chosen."""
     return [x for x in items if not chosen or getattr(x, 'name', x) in chosen]
@@ -170,11 +193,13 @@ def cmd_main(a, root, log):
         datasets = [replace(d, n_train=a.n_train) if d.n_train is not None else d for d in datasets]
     studies = [(n, sp) for n, sp in MAIN_STUDIES.items() if not a.studies or n in a.studies]
     prog = a._progress = _Progress(root, log, 'main', len(seeds) * len(datasets) * len(studies))
+    blocks = []
     for seed in seeds:                      # seed-major: a cut-short night still gives every dataset k seeds
         for ds in datasets:
             for name, spec in studies:
                 methods = _sel(list(ds.methods), a.methods and set(a.methods))
-                prog.run(spec, ds, seed, methods_for(spec.model_type, '', methods), not a.no_retry_failed)
+                blocks.append((0, 'seed', spec, ds, seed, methods_for(spec.model_type, '', methods)))
+    _execute(a, root, log, prog, blocks)
 
 
 def cmd_sweep(a, root, log):
@@ -182,10 +207,12 @@ def cmd_sweep(a, root, log):
     seeds = a.seeds if a.seeds is not None else SWEEP_SEEDS
     points = [p for p in sweep_specs() if not a.studies or p[0] in a.studies]
     prog = a._progress = _Progress(root, log, 'sweep', len(seeds) * len(points))
+    blocks = []
     for seed in seeds:
         for param, value, spec, methods in points:
             methods = _sel(methods, a.methods and set(a.methods))
-            prog.run(spec, SWEEP_DATASET, seed, methods_for(spec.model_type, '', methods), not a.no_retry_failed)
+            blocks.append((0, 'seed', spec, SWEEP_DATASET, seed, methods_for(spec.model_type, '', methods)))
+    _execute(a, root, log, prog, blocks)
 
 
 def cmd_pilot(a, root, log):
@@ -253,6 +280,7 @@ def cmd_ext(a, root, log):
     blocks = [(sec, b) for sec in sections for b in _ext_blocks(sec)]
     n_parts = sum(len(_sel(dss, dsel)) for _, (_, _, dss, _) in blocks) * len(seeds)
     prog = a._progress = _Progress(root, log, 'ext', n_parts)
+    work = []
     for seed in seeds:
         for sec, (spec, methods, dss, kind) in blocks:
             for dname in _sel(dss, dsel):
@@ -260,13 +288,15 @@ def cmd_ext(a, root, log):
                 if n_train and ds.n_train is not None:
                     ds = replace(ds, n_train=n_train)
                 if kind == 'transfer':
-                    prog.run_transfer(spec, ds, seed, C.TRANSFER_SOURCES, not a.no_retry_failed)
+                    # phase 1: transfer reads the values of the main study and of models / distill
+                    work.append((1, 'transfer', spec, ds, seed, C.TRANSFER_SOURCES))
                     continue
                 ms = _sel(methods, a.methods and set(a.methods))
                 ms = C.methods_for(spec.model_type, '', ms, distill=spec.distill)
                 if sec == 'noise':
                     ms = C.noise_methods_for(dname, ms)
-                prog.run(spec, ds, seed, ms, not a.no_retry_failed)
+                work.append((0, 'seed', spec, ds, seed, ms))
+    _execute(a, root, log, prog, work)
 
 
 def cmd_estimate_ext(a, root, log):
@@ -288,6 +318,20 @@ def cmd_status(a, root, log):
             c[(r['study'], r['status'])] += 1
     for (study, status), k in sorted(c.items()):
         log(f'{study:<32} {status:<8} {k}')
+    tot = Counter()
+    for (study, status), k in c.items():
+        tot[status] += k
+    log('total: ' + ', '.join(f'{s}={k}' for s, k in sorted(tot.items())))
+    # [AUDIT-FIX P12] units currently running in parallel workers (markers removed when a unit ends)
+    from study import io as _io
+    running = sorted((root / '_logs' / 'running').glob('*.json')) if (root / '_logs' / 'running').is_dir() else []
+    for p in running:
+        r = _io.load_json(p) or {}
+        mins = (time.time() - r.get('started', time.time())) / 60
+        log(f'running: {r.get("unit", p.stem)} (pid {r.get("pid")}, {mins:.0f} min)')
+    lock = root / '_logs' / 'run.lock'
+    if lock.exists():
+        log(f'orchestrator pid {lock.read_text().strip()} holds {lock}')
 
 
 def main():

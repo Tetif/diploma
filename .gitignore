@@ -61,3 +61,4 @@ run_logs/
 _distill_run.log
 results/probe/
 results/_logs/
+results/bench_parallel/
