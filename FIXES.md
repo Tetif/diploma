@@ -50,3 +50,35 @@ pyDVL переобучает модели в потоках (`parallel_config(ba
 ## B10. Utility pyDVL считался на обучающей выборке (найдено в фазе графиков)
 
 `influence/methods.py` создавал `Dataset(X_train, y_train, X_val, y_val)`, но в pyDVL 0.10 сигнатура — `Dataset(x, y, feature_names, target_names, ...)`. DataFrame `X_val` молча принимался как список имён признаков (итерация по DataFrame даёт имена колонок), поэтому `SupervisedScorer(test_data=...)` оценивал модель на ОБУЧАЮЩИХ данных. Для LOO/Shapley это означает «насколько точка помогает запомнить саму себя»: точка с перевёрнутой меткой получает положительную ценность — отсюда AUC детекции шума LOO < 0.5. Исправление: `Dataset(X_val, y_val)` как тестовые данные scorer'а и `Dataset(X_train, y_train)` для valuation. Тест: `test_valuation_scorer_uses_validation_data`.
+
+## D1–D4. Дистилляция (ветка `refactor`)
+
+| Код | Что было | Что сделано | Где |
+|---|---|---|---|
+| D1 | У XGBoost/CatBoost/RF-обёрток не было `predict_proba` (у XGBoost multiclass был `multi:softmax`): учитель отдавал жёсткие 0/1 метки, LossHigh по деревьям считался как 0/1 loss. | `predict_proba` у всех деревьев (столбец на каждый класс 0..max), `multi:softprob`; учитель даёт мягкие вероятности. | `models/tree_models.py` (D1) |
+| D2 | Многоклассовые цели учителя не смягчались температурой. | Цели = softmax(log p / T), loss = KL·T². | `models/torch_models.py` (`_teacher_targets`, D2) |
+| D3 | Фабрика не пробрасывала общие ключи (или пробрасывала torch-ключи в CatBoost/RF, которые их отвергают). | Общие ключи пробрасываются, torch-only ключи фильтруются для деревьев. | `models/factory.py` (D3) |
+| D4 | Повторный `fit()` продолжал обучение студента с прошлых весов и состояния Adam. | Студент и оптимизатор пересоздаются на каждом `fit()`. | `models/torch_models.py` (`_build_student`, D4) |
+
+Тесты: `tests/test_distillation.py`.
+
+## B11–B13
+
+| Код | Что было | Что сделано | Где |
+|---|---|---|---|
+| B11 | «Эпоха» MLP = один full-batch шаг Adam; с ReduceLROnPlateau и early stopping модели останавливались после ~30–50 шагов. | Настоящие мини-батч эпохи (`batch_size=128`, перемешивание), и в основном обучении, и в pyDVL-refit. `batch_size=0` = старое поведение (точка sweep). | `models/torch_models.py`, `models/factory.py`, `study/config.py` (B11) |
+| B12 | Параллельные fit LightGBM из потоков joblib (pyDVL LOO, backend threading) зависали на Windows. | Fit LightGBM под глобальным `threading.Lock`. | `models/tree_models.py` (B12); тест `test_lightgbm_fits_are_serialised` |
+| B13 | CatBoost `get_object_importance` > 0 означает рост loss (вредный объект), а значение брали как «полезность»: перевёрнутые метки получали высшие оценки (AUC 0.19 на adult). | Знак инвертирован: больше = полезнее (проверено по документации CatBoost). | `experiments/catboost_importance.py:117`; тест в `tests/test_extensions.py` |
+
+## P1–P6. По аудиту использования pyDVL (`docs/PYDVL_AUDIT.md`)
+
+| Код | Что было | Что сделано | Где |
+|---|---|---|---|
+| P1 | pyDVL LiSSA решает (H + (reg + scale·dampen)·I)⁻¹g. Sweep `damp-*` менял только `regularization`, а dampen оставался датасетным → λ_eff = 3…12 при любом damping ≤ 1e-2; кривые LiSSA vs damping были плоскими по построению. | В `damp-*` (`spec.damping` задан) LiSSA идёт с `dampen=0` → λ_eff = damping, как у Direct. Настройки main/sweep/ext без `damping` не изменены (scale/dampen из конфига). В results.json пишется `effective_damping` (Direct: reg; LiSSA: reg + scale·dampen) и `lissa = {scale, dampen, maxiter, implicit_damping_floor = scale/maxiter}`. Почему dampen=0, а не reg=0/dampen=damping/scale: неподвижная точка одна и та же; с dampen=0 граница сходимости по верхнему спектру шире (μ < 2·scale вместо scale·(2−d)); отрицательная кривизна при 100 итерациях растёт максимум как (1+|μ|/scale)¹⁰⁰, NaN ловится pyDVL и метод помечается failed. Проверено на игрушечной MLP: при λ=1 Spearman(LiSSA, Direct)=0.998, при 1e-2 — 0.87; при λ ≤ 1e-4 100 итераций ряда Неймана не разрешают λ < ~scale/100 (это и есть `implicit_damping_floor`), значения конечны. | `influence/methods.py` (`lissa_dampen_override`, `effective_damping`), `study/values.py` |
+| P2 | `TMCShapleyValuation` создавался без `seed` → перестановки невоспроизводимы; кроме того, при n_jobs>1 число/набор перестановок, успевших завершиться до `MaxUpdates`, зависел от потоков (joblib отменял остальные). | `seed` = seed прогона; seeded TMC считается с n_jobs=1 (torch-refit и так сериализованы `_REFIT_LOCK`, лишние отменённые перестановки больше не считаются). Бюджет не менялся (10 перестановок); в results.json — `tmc = {permutations, seed, truncation}`. | `influence/methods.py`, `study/values.py`; тест `test_tmc_shapley_is_seeded_and_lissa_default_damping` |
+| P3 | README подавал AUC Data-OOB/KNN-Shapley как результат «на моделях». | Явно: оба метода не зависят от модели (свой bagging-ансамбль деревьев / kNN), одинаковы во всех `models-*`; сноска на графике 8 (в графике 13 они уже показывались один раз). | `README.md`, `plot_extensions.py` |
+| P4 | LiSSA перемешивает мини-батчи глобальным RNG torch без seed. | На время `fit + influence_factors` RNG фиксируется seed прогона и затем восстанавливается. | `influence/methods.py` (`compute_scores`) |
+| P5 | `self.logger.log_message(...)` без проверки на None (study передаёт logger=None). | Проверка добавлена. | `influence/methods.py` (`setup_methods`) |
+| P6 | Устаревший комментарий «DataOOB skipped - requires BaggingModel». | Комментарий: в main.py-пути Data-OOB не считается, в study он реализован в `study/values.py`. | `influence/methods.py` |
+
+Не менялось (описано в аудите): batch_size DataLoader для influence берётся из глобального `PYDVL_CONFIG` (16), а не из датасетного — смена изменила бы стохастику LiSSA в main без явной необходимости; полный гессиан и малое λ у Direct на MLP (M5) — вопрос постановки (GGN/EKFAC не добавлялись); бюджет TMC 10 перестановок; influence через студента по настоящим меткам.
