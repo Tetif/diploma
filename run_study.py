@@ -6,6 +6,10 @@
     python run_study.py probe                      # timing probe (small n) used by `estimate`
     python run_study.py estimate                   # predicted runtime of main + sweep from the probe
     python run_study.py status                     # done / failed / missing per study
+    python run_study.py ext                        # secondary studies (3 seeds, seed-major), sections:
+                                                   #   models convex distill noise transfer (--sections ...)
+    python run_study.py ext --pilot                # same, tiny (n_train 400) -> results/pilot_ext
+    python run_study.py estimate-ext               # predicted runtime of `ext` from results/pilot_ext
 
 Every (study, dataset, method, seed) writes results/<study>/<dataset>/<method>/seed<k>/results.json;
 finished runs are skipped, so the command can be interrupted and restarted at any time.
@@ -28,7 +32,11 @@ ROOT = Path(__file__).resolve().parent
 
 def _parse():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('command', choices=['main', 'sweep', 'pilot', 'probe', 'estimate', 'status'])
+    ap.add_argument('command', choices=['main', 'sweep', 'pilot', 'probe', 'estimate', 'status', 'ext',
+                                        'estimate-ext'])
+    ap.add_argument('--sections', nargs='*', help='ext: models convex distill noise transfer (default: all)')
+    ap.add_argument('--pilot', action='store_true', help='ext: small pilot (n_train 400) into results/pilot_ext')
+    ap.add_argument('--n-train', type=int, default=None, help='override n_train of the subsampled datasets')
     ap.add_argument('--root', default=None, help='results folder (default results/, pilot: results/pilot)')
     ap.add_argument('--datasets', nargs='*')
     ap.add_argument('--methods', nargs='*')
@@ -116,6 +124,22 @@ class _Progress:
             return
         self.block_done(spec, ds.name, seed)
 
+    def run_transfer(self, spec, ds, seed: int, sources, retry_failed: bool = True):
+        from study.protocol import run_transfer_seed
+        try:
+            run_transfer_seed(self.root, spec, ds, seed, sources, self.log, retry_failed=retry_failed)
+        except Exception as e:  # noqa: BLE001
+            import traceback
+            self.log(f'[{spec.study}/{ds.name}/seed{seed}] BLOCK FAILED: {type(e).__name__}: {e}')
+            self.log(traceback.format_exc()[-1500:])
+            self.part += 1
+            from study import notify
+            notify.post({**self._base('block_failed'), 'study': spec.study, 'dataset': ds.name, 'task': 'transfer',
+                         'seed': seed, 'methods': [], 'random_baseline': None, 'full_data_baseline': None,
+                         'failed_methods': [], 'error': f'{type(e).__name__}: {e}'}, self.log)
+            return
+        self.block_done(spec, ds.name, seed)
+
     def end(self, error: str = None):
         from study import notify
         if not notify.enabled():
@@ -141,6 +165,9 @@ def cmd_main(a, root, log):
     from study.config import MAIN_DATASETS, MAIN_SEEDS, MAIN_STUDIES, methods_for
     seeds = a.seeds if a.seeds is not None else MAIN_SEEDS
     datasets = _sel(list(MAIN_DATASETS.values()), a.datasets and set(a.datasets))
+    if a.n_train:
+        from dataclasses import replace
+        datasets = [replace(d, n_train=a.n_train) if d.n_train is not None else d for d in datasets]
     studies = [(n, sp) for n, sp in MAIN_STUDIES.items() if not a.studies or n in a.studies]
     prog = a._progress = _Progress(root, log, 'main', len(seeds) * len(datasets) * len(studies))
     for seed in seeds:                      # seed-major: a cut-short night still gives every dataset k seeds
@@ -196,6 +223,57 @@ def cmd_probe(a, root, log):
                      _sel(list(ds.methods), a.methods and set(a.methods)), log)
 
 
+EXT_SECTIONS = ['models', 'distill', 'convex', 'noise', 'transfer']   # transfer last: it reads the others
+
+
+def _ext_blocks(section):
+    """-> [(spec, methods, dataset names, kind)] for one section; kind 'seed' (run_seed) or 'transfer'."""
+    from study import config as C
+    if section == 'models':
+        return [(sp, ms, dss, 'seed') for sp, ms, dss in C.models_specs()]
+    if section == 'convex':
+        return [(sp, ms, dss, 'seed') for sp, ms, dss in C.convex_specs()]
+    if section == 'distill':
+        return [(sp, ms, dss, 'seed') for sp, ms, dss in C.distill_specs()]
+    if section == 'noise':
+        return [(sp, ms, dss, 'seed') for sp, ms, dss in C.noise_specs()]
+    if section == 'transfer':
+        return [(sp, None, dss, 'transfer') for sp, dss in C.transfer_specs()]
+    raise SystemExit(f'unknown section {section}')
+
+
+def cmd_ext(a, root, log):
+    """Secondary studies, seed-major (a night cut short still leaves k complete seeds of every section)."""
+    from dataclasses import replace
+    from study import config as C
+    sections = a.sections or EXT_SECTIONS
+    seeds = a.seeds if a.seeds is not None else ([0, 1] if a.pilot else C.EXT_SEEDS)
+    n_train = a.n_train or (400 if a.pilot else None)
+    dsel = a.datasets and set(a.datasets)
+    blocks = [(sec, b) for sec in sections for b in _ext_blocks(sec)]
+    n_parts = sum(len(_sel(dss, dsel)) for _, (_, _, dss, _) in blocks) * len(seeds)
+    prog = a._progress = _Progress(root, log, 'ext', n_parts)
+    for seed in seeds:
+        for sec, (spec, methods, dss, kind) in blocks:
+            for dname in _sel(dss, dsel):
+                ds = C.EXT_DATASETS[dname]
+                if n_train and ds.n_train is not None:
+                    ds = replace(ds, n_train=n_train)
+                if kind == 'transfer':
+                    prog.run_transfer(spec, ds, seed, C.TRANSFER_SOURCES, not a.no_retry_failed)
+                    continue
+                ms = _sel(methods, a.methods and set(a.methods))
+                ms = C.methods_for(spec.model_type, '', ms, distill=spec.distill)
+                if sec == 'noise':
+                    ms = C.noise_methods_for(dname, ms)
+                prog.run(spec, ds, seed, ms, not a.no_retry_failed)
+
+
+def cmd_estimate_ext(a, root, log):
+    from study.estimate import estimate_ext
+    estimate_ext(root, log, n_jobs=a.n_jobs)
+
+
 def cmd_estimate(a, root, log):
     from study.estimate import estimate
     estimate(root, log, n_jobs=a.n_jobs)
@@ -216,6 +294,7 @@ def main():
     a = _parse()
     _setup_env(a)
     root = Path(a.root or ('results/pilot' if a.command == 'pilot' else
+                           'results/pilot_ext' if (a.command == 'ext' and a.pilot) or a.command == 'estimate-ext' else
                            'results/probe' if a.command in ('probe', 'estimate') else 'results'))
     root = root if root.is_absolute() else ROOT / root
     log = _Log(root, a.command)
@@ -223,7 +302,7 @@ def main():
     t0 = time.time()
     a._progress = None
     try:
-        globals()[f'cmd_{a.command}'](a, root, log)
+        globals()[f'cmd_{a.command.replace("-", "_")}'](a, root, log)
     except BaseException as e:
         import traceback
         log(f'{a.command} CRASHED: {type(e).__name__}: {e}')

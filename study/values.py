@@ -5,6 +5,7 @@
 * KNNShapley - pyDVL ``KNNShapleyValuation`` (exact, closed form; classification only).
 * DataOOB - pyDVL ``DataOOBValuation`` on a bagged decision-tree ensemble (Kwon & Zou, 2023).
 * LossHigh - minus the per-sample training loss of the full model (high loss = low value).
+* CatBoostLFC - CatBoost object importance (LossFunctionChange) of the CatBoost model itself.
 """
 from __future__ import annotations
 
@@ -65,8 +66,8 @@ def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tu
     info: dict = {}
     if method in PYDVL_VIA_PROJECT:
         from influence.methods import InfluenceMethods
-        if method in ('Influence', 'LissaInfluence') and trainer.model_type != 'pytorch':
-            raise NotApplicable(f'{method} needs a torch model')
+        if method in ('Influence', 'LissaInfluence') and not trainer.is_torch:
+            raise NotApplicable(f'{method} needs a torch model (MLP, linear or distilled student)')
         pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
         im = InfluenceMethods(None, dataset_config=sp.cfg)
         with _overrides(sp.dataset, spec):
@@ -84,6 +85,15 @@ def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tu
         from experiments.metrics import compute_per_sample_loss
         pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
         return -np.asarray(compute_per_sample_loss(pipe, sp.X_train, sp.y_train, sp.task_type), float), info
+
+    if method == 'CatBoostLFC':
+        if trainer.model_type != 'catboost' or trainer.spec.distill:
+            raise NotApplicable('CatBoost LossFunctionChange needs the CatBoost model itself')
+        from experiments.catboost_importance import compute_catboost_object_importance
+        pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
+        v = compute_catboost_object_importance(pipe, sp.X_train, sp.y_train, sp.X_val, sp.y_val, sp.task_type,
+                                               'catboost')
+        return np.asarray(v, dtype=float), info
 
     from joblib import parallel_config
     from pydvl.valuation.dataset import Dataset

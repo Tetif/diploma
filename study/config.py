@@ -20,11 +20,12 @@ VALUATION = ['LOO', 'TMCShapley']                 # retrain-based (pyDVL), cost 
 CLOSED_FORM = ['KNNShapley', 'DataOOB']           # cheap, model-agnostic baselines
 INFLUENCE = ['Influence', 'LissaInfluence']       # Hessian-based, need a torch model
 BASELINES = ['LossHigh', 'random']
-ALL_METHODS = VALUATION + CLOSED_FORM + INFLUENCE + BASELINES
+MODEL_SPECIFIC = ['CatBoostLFC']                  # CatBoost object importance (LossFunctionChange)
+ALL_METHODS = VALUATION + CLOSED_FORM + INFLUENCE + BASELINES + MODEL_SPECIFIC
 METHOD_LABELS = {
     'LOO': 'LOO', 'TMCShapley': 'TMC-Shapley', 'KNNShapley': 'KNN-Shapley', 'DataOOB': 'Data-OOB',
     'Influence': 'Influence (direct)', 'LissaInfluence': 'Influence (LiSSA)', 'LossHigh': 'Loss (high first)',
-    'random': 'random',
+    'random': 'random', 'CatBoostLFC': 'CatBoost LFC',
 }
 
 MAIN_METHODS = ['LOO', 'KNNShapley', 'DataOOB', 'Influence', 'LissaInfluence', 'LossHigh', 'random']
@@ -38,10 +39,15 @@ class RunSpec:
     noise_rate: float = 0.0
     fracs: Tuple[int, ...] = (5, 10, 20, 30)  # % of train removed
     strategies: Tuple[str, ...] = ('lowest', 'highest')
-    model_type: str = 'pytorch'               # 'pytorch' | 'lightgbm'
+    model_type: str = 'pytorch'               # 'pytorch' | 'lightgbm' | 'xgboost' | 'catboost' | 'random_forest'
+    model_architecture: str = 'simple'        # pytorch: 'simple' (MLP) | 'linear' (logistic / linear regression)
+    distill: bool = False                     # tree teacher (model_type) -> MLP student (values via the student)
+    noise_kind: str = 'random'                # 'random' | 'systematic' (see study/data.py)
     fit_mode: str = 'normal'                  # 'normal' | 'underfit' | 'overfit'
-    n_epochs: int = 300                       # main training (early stopping, patience 70)
-    valuation_epochs: int = 100               # full-batch epochs of every pyDVL refit
+    n_epochs: int = 300                       # main training epochs (early stopping, patience 70 epochs)
+    batch_size: int = 128                     # [AUDIT-FIX B11] mini-batch epochs; 0 = legacy (1 epoch =
+                                              # 1 full-batch step, the MLPs stopped after ~30-50 steps)
+    valuation_epochs: int = 30                # epochs of every pyDVL refit (no early stopping there)
     tmc_permutations: int = 10
     damping: Optional[float] = None           # Influence/LiSSA regularization; None = dataset default
     knn_k: int = 5
@@ -81,33 +87,131 @@ SWEEP_SEEDS = [0, 1, 2]
 SWEEP_BASE = RunSpec('sweep-base', task='noise', noise_rate=0.10, strategies=('lowest',), fracs=(5, 10, 20))
 _ALL_BUT_TMC = ['LOO', 'KNNShapley', 'DataOOB', 'Influence', 'LissaInfluence', 'LossHigh', 'random']
 SWEEP_GRID: Dict[str, Tuple[List, List[str]]] = {
-    # param: (values, methods to run)
-    'noise_rate': ([0.0, 0.05, 0.10, 0.20], _ALL_BUT_TMC),
+    # param: (values, methods to run). Noise rate, damping and model type moved to the extension study
+    # (sections noise / convex / models), which covers them on all datasets; see run_study.py ext.
     'sample_scale': ([0.1, 0.3, 1.0], _ALL_BUT_TMC),
-    'damping': ([1e-4, 1e-3, 1e-2, 1e-1], ['Influence', 'LissaInfluence', 'random']),
-    'valuation_epochs': ([20, 50, 200], ['LOO', 'random']),
+    'valuation_epochs': ([10, 30, 60], ['LOO', 'random']),
+    'batch_size': ([0, 128], _ALL_BUT_TMC),   # 0 = legacy full-batch training (before AUDIT-FIX B11)
     'fit_mode': (['underfit', 'normal', 'overfit'], _ALL_BUT_TMC),
-    'model_type': (['pytorch', 'lightgbm'], ['LOO', 'KNNShapley', 'DataOOB', 'LossHigh', 'random']),
 }
 
 
+def sweep_study(param: str, value) -> str:
+    """Study name of a sweep point; points equal to SWEEP_BASE share the study 'sweep-base'."""
+    if getattr(SWEEP_BASE, param) == value:
+        return 'sweep-base'
+    return f'sweep-{param}-{value}'
+
+
 def sweep_specs() -> List[Tuple[str, object, RunSpec, List[str]]]:
-    """[(param, value, spec, methods)] for every sweep point."""
-    out = []
+    """[(param, value, spec, methods)] for every distinct sweep point. Points equal to SWEEP_BASE are merged
+    into one 'sweep-base' entry (param 'base') that runs the union of their methods."""
+    out, base_methods = [], []
     for param, (values, methods) in SWEEP_GRID.items():
         for v in values:
-            spec = replace(SWEEP_BASE, study=f'sweep-{param}-{v}', **{param: v})
-            if param == 'noise_rate' and v == 0.0:
-                spec = replace(spec, task='clean', strategies=('lowest',))
-            out.append((param, v, spec, list(methods)))
+            if sweep_study(param, v) == 'sweep-base':
+                base_methods += [m for m in methods if m not in base_methods]
+                continue
+            out.append((param, v, replace(SWEEP_BASE, study=sweep_study(param, v), **{param: v}), list(methods)))
+    if base_methods:
+        out.insert(0, ('base', '-', replace(SWEEP_BASE, study='sweep-base'), base_methods))
     return out
 
 
-def methods_for(model_type: str, task_type: str, methods: List[str]) -> List[str]:
+def methods_for(model_type: str, task_type: str, methods: List[str], distill: bool = False) -> List[str]:
     """Drop methods that cannot run for this model / task (reported as skipped)."""
     out = []
     for m in methods:
-        if m in INFLUENCE and model_type != 'pytorch':
+        if m in INFLUENCE and model_type != 'pytorch' and not distill:
+            continue
+        if m == 'CatBoostLFC' and (model_type != 'catboost' or distill):
             continue
         out.append(m)
     return out
+
+
+# ================================================================ extensions (secondary studies, 3 seeds)
+# Same datasets / splits / seeds as the main study (make_split depends only on dataset, seed, noise), so
+# every secondary study is paired with the main one seed by seed.
+EXT_SEEDS = [0, 1, 2]
+EXT_DATASETS: Dict[str, DatasetSpec] = {k: replace(v, methods=()) for k, v in MAIN_DATASETS.items()}
+_NOISE10 = dict(task='noise', noise_rate=0.10, strategies=('lowest',), fracs=(5, 10, 20))
+
+# 1. models: the same protocol with tree ensembles instead of the MLP (MLP = the main study)
+TREE_MODELS = ['lightgbm', 'xgboost', 'catboost', 'random_forest']
+TREE_METHODS = ['LOO', 'KNNShapley', 'DataOOB', 'LossHigh', 'random']
+
+
+def models_specs() -> List[Tuple[RunSpec, List[str], List[str]]]:
+    """[(spec, methods, datasets)]"""
+    out = []
+    for m in TREE_MODELS:
+        meths = TREE_METHODS + (['CatBoostLFC'] if m == 'catboost' else [])
+        for task, kw in (('clean', dict(task='clean')), ('noise10', _NOISE10)):
+            out.append((RunSpec(f'models-{m}-{task}', model_type=m, **kw), meths, list(EXT_DATASETS)))
+    return out
+
+
+# 2. convex sanity check: influence on logistic / linear regression vs the MLP, damping 1e-6 .. 1
+DAMPINGS = [1e-6, 1e-4, 1e-2, 1.0]
+CONVEX_METHODS = ['Influence', 'LissaInfluence', 'LossHigh', 'random']
+
+
+def convex_specs():
+    out = []
+    for arch, dss in (('linear', list(EXT_DATASETS)), ('simple', ['wine', 'housing', 'adult'])):
+        for d in DAMPINGS:
+            out.append((RunSpec(f'damp-{"mlp" if arch == "simple" else arch}-{d:g}', model_architecture=arch,
+                                damping=d, **_NOISE10), list(CONVEX_METHODS), dss))
+    return out
+
+
+# 3. distillation: tree teacher -> MLP student; influence through the student
+DISTILL_TEACHERS = ['lightgbm', 'catboost']
+DISTILL_METHODS = ['Influence', 'LissaInfluence', 'LossHigh', 'random']
+
+
+def distill_specs():
+    return [(RunSpec(f'distill-{t}-noise10', model_type=t, distill=True, **_NOISE10), list(DISTILL_METHODS),
+             list(EXT_DATASETS)) for t in DISTILL_TEACHERS]
+
+
+# 5. systematic vs random noise at 5 / 10 / 20 % (MLP; random 10 % = main study "noise10")
+NOISE_METHODS = ['KNNShapley', 'DataOOB', 'Influence', 'LissaInfluence', 'LossHigh', 'random']
+
+
+def noise_specs():
+    out = []
+    for rate in (0.05, 0.10, 0.20):
+        pct = int(round(rate * 100))
+        kinds = [('systematic', f'sysnoise{pct}')] + ([] if pct == 10 else [('random', f'noise{pct}')])
+        for kind, name in kinds:
+            spec = replace(RunSpec(name, **_NOISE10), noise_rate=rate, noise_kind=kind)
+            out.append((spec, list(NOISE_METHODS), list(EXT_DATASETS)))
+    return out
+
+
+def noise_methods_for(dataset: str, methods: List[str]) -> List[str]:
+    # covertype direct influence costs ~8 min per run (54 features x 7 classes MLP): main study only
+    return [m for m in methods if not (dataset == 'covertype' and m == 'Influence')]
+
+
+# 4. transfer: values from a source (study, model, method) -> removal retrained with a target model
+TRANSFER_TARGETS = ['pytorch', 'lightgbm', 'xgboost', 'catboost', 'random_forest', 'distill-lightgbm']
+TRANSFER_SOURCES: List[Tuple[str, str, str]] = (
+    [('noise10', 'pytorch', m) for m in ('LOO', 'Influence', 'LissaInfluence', 'LossHigh')]
+    + [(f'models-{t}-noise10', t, m) for t in TREE_MODELS for m in ('LOO', 'LossHigh')]
+    + [('models-catboost-noise10', 'catboost', 'CatBoostLFC'),
+       ('distill-lightgbm-noise10', 'distill-lightgbm', 'Influence'),
+       ('distill-lightgbm-noise10', 'distill-lightgbm', 'LossHigh'),
+       ('noise10', 'any', 'DataOOB'), ('noise10', 'any', 'KNNShapley')])
+
+
+def transfer_target_spec(target: str) -> RunSpec:
+    distill = target.startswith('distill-')
+    mt = target.split('-', 1)[1] if distill else target
+    return RunSpec(f'transfer-{target}', model_type=mt, distill=distill, **_NOISE10)
+
+
+def transfer_specs():
+    return [(transfer_target_spec(t), list(EXT_DATASETS)) for t in TRANSFER_TARGETS]

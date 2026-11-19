@@ -71,6 +71,13 @@ def block_summary(data: Dict, study: str, dataset: str, frac=10, strategy: str =
     if base:
         b = [r['baseline'] for r in base.values()]
         out['full_data_baseline'] = {'mean': float(np.mean(b)), 'std': float(np.std(b)), 'n_seeds': len(b)}
+        r0 = next(iter(base.values()))
+        out['model'] = r0.get('model')
+        out['noise_kind'] = r0.get('noise_kind')
+        tm = [r['teacher_metric'] for r in base.values() if r.get('teacher_metric') is not None]
+        if tm:     # distillation: does the student match the teacher?
+            out['teacher_baseline'] = {'mean': float(np.mean(tm)), 'n_seeds': len(tm),
+                                       'fidelity': float(np.mean([r.get('fidelity', np.nan) for r in base.values()]))}
     if rnd:
         rv = [curve_value(r, 'random', frac) for r in rnd.values()]
         rv = [v for v in rv if v is not None]

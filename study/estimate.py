@@ -1,8 +1,10 @@
-"""Runtime estimate for the main study and the sweep from a timing probe (``run_study.py probe``).
+"""Runtime estimate for the main study and the sweep from a timing probe (``run_study.py probe``), and for
+the secondary studies (``run_study.py ext``) from their pilot (``run_study.py ext --pilot``).
 
 Model: time(values) ~ t_probe * (n / n_probe) ** alpha_method (alpha fitted on adult n=300/600,
-default 1), time(retrain) likewise; TMC-Shapley scales with the number of permutations.
-It is a rough estimate (+-50 %); n_jobs / threads of the real run should match the probe.
+default 1), time(retrain) likewise; TMC-Shapley scales with the number of permutations, LOO with the
+refit epochs. It is a rough estimate (+-50 %); parallel refits are scaled by (probe_jobs / n_jobs) ** 0.75
+(an assumption, not a measurement).
 """
 from __future__ import annotations
 
@@ -26,7 +28,8 @@ def _probe(root):
         n_retr = sum(len(c) for c in r.get('curves', {}).values()) or 1
         t[(r['dataset'], r['method'])].append(
             (r['n_train'], tm.get('values_s', 0.0), tm.get('curves_s', 0.0) / n_retr,
-             r.get('spec', {}).get('tmc_permutations', 10), tm.get('baseline_s', 0.0), r.get('status')))
+             r.get('spec', {}).get('tmc_permutations', 10), tm.get('baseline_s', 0.0), r.get('status'),
+             r.get('spec', {}).get('valuation_epochs', 100)))
     return t
 
 
@@ -41,6 +44,79 @@ def _n_train(ds, sample_scale=1.0):
     if ds.n_train is not None:
         return int(round(ds.n_train * sample_scale / 0.8 * 0.8))
     return len(make_split(ds.name, 0, None, ds.max_holdout).X_train)
+
+
+def probe_alphas(root):
+    t = _probe(root)
+    alphas = {}
+    for (d, m), pts in t.items():
+        if d == 'adult':
+            av, ar = _alpha(pts, 1), _alpha(pts, 2)
+            alphas[m] = (float(np.clip(av if av is not None else 1.0, 0.0, 2.0)),
+                         float(np.clip(ar if ar is not None else 1.0, 0.5, 1.5)))
+    return alphas
+
+
+def estimate_ext(root, log=print, n_jobs=None, probe_root=None):
+    """Secondary studies: every block of `run_study.py ext` is timed by the same block of the pilot
+    (n_train 400, wine full size) and scaled to the real n_train with the main probe's exponents."""
+    import importlib
+    from pathlib import Path
+    from study import config as C
+    rs = importlib.import_module('run_study')
+    probe_root = probe_root or (Path(root).parent / 'probe')
+    alphas = probe_alphas(probe_root)
+    pilot = defaultdict(list)
+    jobs = 1
+    for r in io.iter_results(root):
+        if r.get('status') not in ('ok', 'skipped'):
+            continue
+        jobs = max(jobs, r.get('n_jobs') or 1)
+        tm = r.get('timing', {})
+        pilot[(r['study'], r['dataset'], r['method'])].append(
+            (r['n_train'], tm.get('values_s', 0.0), tm.get('curves_s', tm.get('total_s', 0.0)),
+             tm.get('baseline_s', 0.0), r.get('status')))
+    par = (jobs / n_jobs) ** 0.75 if n_jobs else 1.0
+    log(f'pilot ran with n_jobs={jobs}; estimating for n_jobs={n_jobs or jobs} (LOO x{par:.2f}); '
+        f'exponents from {probe_root}: ' + ', '.join(f'{m}={a:.2f}' for m, (a, _) in sorted(alphas.items())))
+    per_section, missing = defaultdict(float), set()
+    for sec in rs.EXT_SECTIONS:
+        for spec, methods, dss, kind in rs._ext_blocks(sec):
+            for dname in dss:
+                ds = C.EXT_DATASETS[dname]
+                n = _n_train(ds)
+                if kind == 'transfer':
+                    methods_here = ['random'] + [f'{sm}.{m}' for _, sm, m in C.TRANSFER_SOURCES]
+                else:
+                    methods_here = C.methods_for(spec.model_type, '', methods, distill=spec.distill)
+                    if sec == 'noise':
+                        methods_here = C.noise_methods_for(dname, methods_here)
+                base_added = False
+                for m in methods_here:
+                    pts = pilot.get((spec.study, dname, m))
+                    if not pts:
+                        missing.add((spec.study, dname, m))
+                        continue
+                    n0 = float(np.mean([p[0] for p in pts]))
+                    if pts[0][4] == 'skipped':
+                        continue
+                    v0, r0, b0 = (float(np.mean([p[i] for p in pts])) for i in (1, 2, 3))
+                    key = m.split('.')[-1]
+                    av = alphas.get(key, (1.0, 1.0))[0]
+                    v = v0 * (n / n0) ** av * (par if key == 'LOO' else 1.0)
+                    c = v + r0 * (n / n0)
+                    if not base_added:
+                        c += b0 * (n / n0)
+                        base_added = True
+                    per_section[sec] += c * len(C.EXT_SEEDS)
+    total = 0.0
+    for sec in rs.EXT_SECTIONS:
+        total += per_section[sec]
+        log(f'  ext {sec:<9} {per_section[sec] / 3600:6.2f} h ({len(C.EXT_SEEDS)} seeds)')
+    if missing:
+        log(f'  ({len(missing)} blocks not in the pilot, not counted, e.g. {sorted(missing)[:4]})')
+    log(f'EXT total: {total / 3600:.1f} h')
+    return per_section
 
 
 def estimate(root, log=print, n_jobs=None):
@@ -67,7 +143,7 @@ def estimate(root, log=print, n_jobs=None):
         pts = t.get((dataset, method)) or t.get(('adult', method))
         if not pts:
             return None
-        n0, v0, r0, perms0, b0, status = max(pts, key=lambda p: p[0])
+        n0, v0, r0, perms0, b0, status, vep0 = max(pts, key=lambda p: p[0])
         if status == 'skipped':
             return 0.0
         av, ar = alphas.get(method, (1.0, 1.0))
@@ -75,7 +151,7 @@ def estimate(root, log=print, n_jobs=None):
         if method == 'TMCShapley':
             v *= spec.tmc_permutations / max(perms0, 1)
         if method == 'LOO':
-            v *= spec.valuation_epochs / 100.0
+            v *= spec.valuation_epochs / max(vep0, 1)
         if method in ('LOO', 'TMCShapley'):
             v *= par
         r = r0 * (n / n0) ** ar * n_retrain
