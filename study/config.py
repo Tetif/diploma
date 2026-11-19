@@ -21,7 +21,9 @@ CLOSED_FORM = ['KNNShapley', 'DataOOB']           # cheap, model-agnostic baseli
 INFLUENCE = ['Influence', 'LissaInfluence']       # Hessian-based, need a torch model
 BASELINES = ['LossHigh', 'random']
 MODEL_SPECIFIC = ['CatBoostLFC', 'BoostIn']       # CatBoost LossFunctionChange; BoostIn (GBDT, [AUDIT-FIX P10])
-GBDT_MODELS = ('lightgbm', 'xgboost', 'catboost')
+# BoostIn via tree_influence: LightGBM only. CatBoost: our models use leaf_estimation_iterations=10 (Logloss
+# default), the package needs 1; XGBoost>=2: base_score is estimated, the parser assumes 0 (mismatch).
+BOOSTIN_MODELS = ('lightgbm',)
 ALL_METHODS = VALUATION + CLOSED_FORM + INFLUENCE + BASELINES + MODEL_SPECIFIC
 METHOD_LABELS = {
     'LOO': 'LOO', 'TMCShapley': 'TMC-Shapley', 'KNNShapley': 'KNN-Shapley', 'DataOOB': 'Data-OOB',
@@ -131,7 +133,7 @@ def methods_for(model_type: str, task_type: str, methods: List[str], distill: bo
             continue
         if m == 'CatBoostLFC' and model_type != 'catboost':     # distill: LFC of the CatBoost teacher [P11]
             continue
-        if m == 'BoostIn' and model_type not in GBDT_MODELS:
+        if m == 'BoostIn' and model_type not in BOOSTIN_MODELS:
             continue
         out.append(m)
     return out
@@ -154,7 +156,7 @@ def models_specs() -> List[Tuple[RunSpec, List[str], List[str]]]:
     out = []
     for m in TREE_MODELS:
         meths = TREE_METHODS + (['CatBoostLFC'] if m == 'catboost' else []) \
-            + (['BoostIn'] if m in ('lightgbm', 'catboost') else [])      # [AUDIT-FIX P10]
+            + (['BoostIn'] if m in BOOSTIN_MODELS else [])               # [AUDIT-FIX P10]
         for task, kw in (('clean', dict(task='clean')), ('noise10', _NOISE10)):
             out.append((RunSpec(f'models-{m}-{task}', model_type=m, **kw), meths, list(EXT_DATASETS)))
     return out

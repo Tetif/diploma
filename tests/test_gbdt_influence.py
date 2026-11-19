@@ -69,12 +69,13 @@ def test_distill_specs_have_both_targets_and_direct_baselines():
     for t in C.DISTILL_TEACHERS:
         sp, ms = specs[f'distill-{t}-noise10']
         assert sp.distill_influence_target == 'true_labels'
-        assert {'Influence', 'LissaInfluence', 'BoostIn', 'DataOOB', 'LossHigh'} <= set(ms)
+        assert {'Influence', 'LissaInfluence', 'DataOOB', 'LossHigh'} <= set(ms)
+        assert ('BoostIn' in ms) == (t == 'lightgbm')
         assert ('CatBoostLFC' in ms) == (t == 'catboost')
         sp2, ms2 = specs[f'distill-{t}-noise10-tgtteacher']
         assert sp2.distill_influence_target == 'teacher' and set(ms2) == {'Influence', 'LissaInfluence'}
     models = {sp.study: ms for sp, ms, _ in C.models_specs()}
-    assert 'BoostIn' in models['models-lightgbm-noise10'] and 'BoostIn' in models['models-catboost-noise10']
+    assert 'BoostIn' in models['models-lightgbm-noise10'] and 'BoostIn' not in models['models-catboost-noise10']
     assert 'BoostIn' not in C.methods_for('random_forest', '', ['BoostIn'])
 
 
