@@ -101,7 +101,9 @@ def fig_models(P, data, outdir):
     P.finish(fig, os.path.join(outdir, "8_models.png"), "Does the model matter? MLP vs tree ensembles",
              note="Top: full-data holdout metric, dot = seed, tick = mean. Middle: AUC of finding the 10 % corrupted "
                   "labels by low value (0.5 = random). Bottom: gain of removing the 10 % lowest-valued points over "
-                  "random removal on clean data. Small dots = seeds, large dot = mean. MLP = main study.")
+                  "random removal on clean data. Small dots = seeds, large dot = mean. MLP = main study. "
+                  "Data-OOB and KNN-Shapley are model-agnostic (own bagged trees / kNN): their values and AUC are the "
+                  "same for every model; only the retraining after removal differs.")
 
 
 # ----------------------------------------------------------------------------- 9 convex vs MLP
