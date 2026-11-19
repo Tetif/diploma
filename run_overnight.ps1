@@ -26,6 +26,9 @@ Other knobs: -NJobs (parallel pyDVL refits), -Threads (torch/BLAS threads per pr
 Logs: run_logs\overnight-<timestamp>.log (+ results\_logs\*.log written by run_study.py).
 #>
 param(
+    [int]$Workers = 6,
+    [int]$ThreadsPerWorker = 2,
+    [int]$MinFreeMB = 1500,
     [int]$NJobs = 8,
     [int]$Threads = 2,
     [string]$Device = "cpu",
