@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 import traceback
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -11,6 +11,8 @@ from study import io
 from study.config import DatasetSpec, RunSpec
 from study.data import Split, make_split
 from study.values import NotApplicable, compute_values
+
+CLASSIFICATION_TASKS = ('binary_classification', 'multiclass_classification')
 
 FOUND_AT = (5, 10, 15, 20, 30)   # % of train inspected (lowest value first)
 
@@ -67,14 +69,38 @@ class Trainer:
         return float(h['final_metric']), model, ysc
 
 
+def _removal_mask(order: np.ndarray, k: int, y: Optional[np.ndarray]) -> np.ndarray:
+    """keep-mask after removing k points following `order`.
+
+    Classification (y given): k is split across classes in proportion to their (observed) frequency and
+    the first points of `order` within each class are removed; at least one point per class stays.
+    Same rule as the thesis runner (removal_indices_per_class_*). Without it, removing 20-30 % of a small
+    imbalanced train set can wipe out the minority class and F1 collapses for reasons unrelated to the
+    valuation method. Regression (y None): the first k points of `order`.
+    """
+    n = len(order)
+    keep = np.ones(n, bool)
+    if k <= 0:
+        return keep
+    if y is None:
+        keep[order[:k]] = False
+        return keep
+    from experiments.removal_strategies import _allocate_proportional_n_per_class
+    alloc = _allocate_proportional_n_per_class(y, k)
+    y_ord = y[order]
+    for c, n_c in alloc.items():
+        if n_c > 0:
+            keep[order[y_ord == c][:n_c]] = False
+    return keep
+
+
 def _curve(trainer: Trainer, order: np.ndarray, fracs, seed: int) -> Dict[str, float]:
     sp = trainer.split
     n = len(sp.X_train)
+    y = np.asarray(sp.y_train) if sp.task_type in CLASSIFICATION_TASKS else None
     out = {}
     for f in fracs:
-        k = int(round(n * f / 100.0))
-        keep = np.ones(n, bool)
-        keep[order[:k]] = False
+        keep = _removal_mask(order, int(round(n * f / 100.0)), y)
         idx = np.flatnonzero(keep)
         out[str(f)] = trainer.fit(sp.X_train.iloc[idx], sp.y_train.iloc[idx], seed)[0]
     return out
@@ -113,6 +139,7 @@ def run_seed(root, spec: RunSpec, ds: DatasetSpec, seed: int, methods: List[str]
     t_base = time.time() - t0
     n = len(split.X_train)
     common = {'study': spec.study, 'dataset': ds.name, 'seed': seed, 'task_type': split.task_type,
+              'removal': 'class_proportional' if split.task_type in CLASSIFICATION_TASKS else 'global',
               'metric': trainer.metric, 'higher_is_better': trainer.higher_is_better, 'spec': spec.to_dict(),
               'n_features': trainer.n_features, 'n_epochs': trainer.n_epochs, **split.sizes(),
               'baseline': base_metric, 'device': S.DEVICE, 'n_jobs': S.N_JOBS}

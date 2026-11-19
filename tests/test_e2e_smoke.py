@@ -76,3 +76,16 @@ def test_webhook_never_raises(monkeypatch):
     from study import notify
     monkeypatch.setenv('DIPLOMA_WEBHOOK_URL', 'http://127.0.0.1:9/unreachable')
     assert notify.post({'x': 1}) is False
+
+
+def test_removal_mask_is_class_proportional():
+    import numpy as np
+    from study.protocol import _removal_mask
+    y = np.array([0] * 90 + [1] * 10)
+    order = np.r_[np.arange(90, 100), np.arange(90)]   # minority class ranked lowest
+    keep = _removal_mask(order, 20, y)
+    assert (~keep).sum() == 20
+    assert (~keep[y == 1]).sum() == 2 and (~keep[y == 0]).sum() == 18
+    assert not keep[[90, 91]].any() and keep[92:].all()
+    keep_reg = _removal_mask(order, 20, None)
+    assert (~keep_reg[90:]).all()
