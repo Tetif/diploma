@@ -66,6 +66,7 @@ def test_extension_blocks_and_transfer(tmp_path, monkeypatch):
     assert r['effective_damping'] == pytest.approx(S.get_influence_params('wine')['regularization'])
     b = io.load_json(io.run_dir(tmp_path, 'dist', 'wine', '_baseline', 0) / 'results.json')
     assert b['model'] == 'distill-lightgbm' and 'teacher_metric' in b and b['fidelity'] > 0.3
+    assert {'r2_student_vs_teacher', 'r2_student_vs_teacher_train', 'fidelity_train', 'student_best_epoch'} <= set(b)
     assert io.load_json(io.run_dir(tmp_path, 'lin', 'wine', '_baseline', 0) / 'results.json')['model'] == 'linear'
 
     sources = [('src', 'pytorch', 'LossHigh'), ('cb', 'catboost', 'CatBoostLFC'), ('missing', 'pytorch', 'LOO')]

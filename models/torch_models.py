@@ -505,6 +505,7 @@ class DistilledModelWrapper(BaseModel):
         last_loss = None
 
         n = X_tensor.shape[0]
+        epoch, best_epoch = -1, -1   # [AUDIT-FIX P7] stopping diagnostics
         for epoch in range(self.distillation_epochs):
             if self.batch_size and n > self.batch_size:
                 perm = torch.randperm(n, device=X_tensor.device)
@@ -545,6 +546,7 @@ class DistilledModelWrapper(BaseModel):
                 best_val_loss = current_metric
                 best_train_loss = float(last_loss)
                 best_state = {k: v.detach().clone() for k, v in self.student_model.state_dict().items()}
+                best_epoch = epoch
                 patience_counter = 0
             else:
                 patience_counter += 1
@@ -554,6 +556,8 @@ class DistilledModelWrapper(BaseModel):
 
         if best_state is not None:
             self.student_model.load_state_dict(best_state)
+        self.best_epoch_ = int(best_epoch) + 1        # [AUDIT-FIX P7] 1-based epoch of the restored state
+        self.epochs_run_ = int(epoch) + 1             # epochs actually run (early stopping)
 
         self.is_distilled = True
         debug_print("Distillation completed successfully!")

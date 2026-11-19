@@ -64,6 +64,9 @@ class Trainer:
             S.MODEL_FIT_MODE = old_mode
         if spec.model_type in TREE_MODELS:
             ds_params = _tree_params(spec.model_type, ds_params, model_seed)
+            if split.task_type in CLASSIFICATION_TASKS and spec.tree_class_weight:
+                # [AUDIT-FIX P8] class weighting like the MLP's pos_weight (see models/tree_models._class_weighting)
+                ds_params['class_weight'] = spec.tree_class_weight
 
         arch = spec.model_architecture if spec.model_type == 'pytorch' else 'simple'
         mp = {'model_type': spec.model_type, 'model_architecture': arch, 'input_size': n_features,
@@ -223,6 +226,44 @@ class PeakRSS:
         return False
 
 
+def holdout_prob_metrics(trainer: Trainer, model) -> dict:
+    """[AUDIT-FIX P7] Threshold-free holdout metrics of a classifier: ROC-AUC (binary; multiclass one-vs-rest
+    macro) and log loss, from predict_proba. Empty dict for regression or models without probabilities."""
+    sp = trainer.split
+    if not sp.is_classification or not hasattr(model, 'predict_proba'):
+        return {}
+    from sklearn.metrics import log_loss, roc_auc_score
+    try:
+        Xh = trainer.pre.transform(sp.X_hold)
+        Xh = Xh.toarray() if hasattr(Xh, 'toarray') else np.asarray(Xh)
+        p = np.asarray(model.predict_proba(Xh), dtype=np.float64)
+        y = np.asarray(sp.y_hold).astype(int)
+        k = int(max(y.max(), np.asarray(sp.y_train).max())) + 1
+        if p.ndim == 1:
+            p = np.column_stack([1.0 - p, p])
+        if p.shape[1] < k:
+            p = np.column_stack([p, np.zeros((len(p), k - p.shape[1]))])
+        p = np.clip(p, 1e-15, 1.0)
+        p = p / p.sum(axis=1, keepdims=True)
+        labels = list(range(p.shape[1]))
+        if p.shape[1] == 2:
+            auc = roc_auc_score(y, p[:, 1])
+        else:
+            present = np.unique(y)
+            q = p[:, present] / p[:, present].sum(axis=1, keepdims=True)
+            auc = roc_auc_score(y, q, multi_class='ovr', average='macro', labels=present)
+        return {'holdout_roc_auc': float(auc), 'holdout_logloss': float(log_loss(y, p, labels=labels))}
+    except Exception as e:  # noqa: BLE001 - diagnostics must not fail the run
+        return {'holdout_prob_metrics_error': f'{type(e).__name__}: {e}'}
+
+
+def class_weighting_info(model) -> dict:
+    """[AUDIT-FIX P8] class weights actually used by the full-data tree model (empty for MLP / regression)."""
+    m = getattr(model, 'base_model', model)          # distillation: the teacher
+    cw = getattr(m, 'class_weighting_', None)
+    return {'class_weighting': cw} if cw else {}
+
+
 def distill_diagnostics(trainer: Trainer, model, y_scaler) -> dict:
     """Does the distillation work? teacher / student holdout metric and student-teacher agreement."""
     sp = trainer.split
@@ -240,6 +281,21 @@ def distill_diagnostics(trainer: Trainer, model, y_scaler) -> dict:
     else:
         out['fidelity'] = float(np.corrcoef(pt.ravel(), ps.ravel())[0, 1])
         out['fidelity_kind'] = 'pearson r'
+    # [AUDIT-FIX P7] more diagnostics: teacher threshold-free metrics, student stopping, train fidelity, R^2
+    out.update({f'teacher_{k}': v for k, v in holdout_prob_metrics(trainer, teacher).items()})
+    out['student_best_epoch'] = getattr(model, 'best_epoch_', None)
+    out['student_epochs_run'] = getattr(model, 'epochs_run_', None)
+    out['student_max_epochs'] = getattr(model, 'distillation_epochs', None)
+    Xt = trainer.pre.transform(sp.X_train)
+    Xt = Xt.toarray() if hasattr(Xt, 'toarray') else np.asarray(Xt)
+    tt, st = np.asarray(teacher.predict(Xt)), np.asarray(model.predict(Xt))
+    if sp.is_classification:
+        out['fidelity_train'] = float(np.mean(_pred_to_labels(tt, sp.task_type) == _pred_to_labels(st, sp.task_type)))
+    else:
+        from sklearn.metrics import r2_score
+        out['fidelity_train'] = float(np.corrcoef(tt.ravel(), st.ravel())[0, 1])
+        out['r2_student_vs_teacher'] = float(r2_score(pt.ravel(), ps.ravel()))
+        out['r2_student_vs_teacher_train'] = float(r2_score(tt.ravel(), st.ravel()))
     return out
 
 
@@ -263,6 +319,8 @@ def run_seed(root, spec: RunSpec, ds: DatasetSpec, seed: int, methods: List[str]
     base_metric, base_model, base_ysc = trainer.fit(split.X_train, split.y_train, model_seed)
     t_base = time.time() - t0
     extra = distill_diagnostics(trainer, base_model, base_ysc) if spec.distill else {}
+    extra.update(holdout_prob_metrics(trainer, base_model))     # [AUDIT-FIX P7]
+    extra.update(class_weighting_info(base_model))               # [AUDIT-FIX P8]
     n = len(split.X_train)
     common = {'study': spec.study, 'dataset': ds.name, 'seed': seed, 'task_type': split.task_type,
               'removal': 'class_proportional' if split.task_type in CLASSIFICATION_TASKS else 'global',
@@ -274,7 +332,7 @@ def run_seed(root, spec: RunSpec, ds: DatasetSpec, seed: int, methods: List[str]
                  {**common, 'method': '_baseline', 'status': 'ok', 'timing': {'baseline_s': t_base}})
     log(f'[{spec.study}/{ds.name}/seed{seed}] n_train={n} holdout={len(split.X_hold)} '
         f'{trainer.metric}={base_metric:.4f} (baseline {t_base:.0f}s) todo={todo}'
-        + (f" teacher={extra['teacher_metric']:.4f} fidelity={extra['fidelity']:.3f}" if extra else ''))
+        + (f" teacher={extra['teacher_metric']:.4f} fidelity={extra['fidelity']:.3f}" if 'teacher_metric' in extra else ''))
 
     for m in todo:
         out_dir = io.run_dir(root, spec.study, ds.name, m, seed)
@@ -359,12 +417,13 @@ def run_transfer_seed(root, spec: RunSpec, ds: DatasetSpec, seed: int, sources, 
                        spec.noise_kind)
     model_seed = S.RANDOM_STATE + 1000 * seed
     trainer = Trainer(split, spec, model_seed)
-    base_metric, _, _ = trainer.fit(split.X_train, split.y_train, model_seed)
+    base_metric, tmodel, _ = trainer.fit(split.X_train, split.y_train, model_seed)
     n = len(split.X_train)
+    extra = {**holdout_prob_metrics(trainer, tmodel), **class_weighting_info(tmodel)}   # [AUDIT-FIX P7/P8]
     common = {'study': spec.study, 'dataset': ds.name, 'seed': seed, 'task_type': split.task_type,
               'removal': 'class_proportional' if split.task_type in CLASSIFICATION_TASKS else 'global',
               'metric': trainer.metric, 'higher_is_better': trainer.higher_is_better, 'spec': spec.to_dict(),
-              **split.sizes(), 'baseline': base_metric, 'model': trainer.label, 'target': trainer.label}
+              **split.sizes(), 'baseline': base_metric, 'model': trainer.label, 'target': trainer.label, **extra}
     io.save_json(io.run_dir(root, spec.study, ds.name, '_baseline', seed) / 'results.json',
                  {**common, 'method': '_baseline', 'status': 'ok', 'timing': {'baseline_s': time.time() - t0}})
     log(f'[{spec.study}/{ds.name}/seed{seed}] target={trainer.label} {trainer.metric}={base_metric:.4f} '
