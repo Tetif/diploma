@@ -37,6 +37,7 @@
 Для классификации во всех results.json есть пороговонезависимые `holdout_roc_auc` и `holdout_logloss` полной модели (F1 при пороге 0.5 сильно зависит от калибровки). Пилот в `results/pilot_ext` (до весов классов у деревьев) (1–2 сида, у части прогонов `n_train=400`) — сигнал, не вывод:
 
 - Поиск 10 % испорченных меток: high loss даёт AUC 0.86–0.99 почти на всех моделях, Data-OOB (не зависит от модели, один расчёт на датасет) — того же уровня; LOO ≈ 0.5. У XGBoost high loss на wine/housing слабый (0.57/0.64). CatBoost LFC средний (0.56–0.82) и на covertype недоступен (MultiClass).
+- GBDT-influence через дистилляцию (P9–P11, docs/GBDT_INFLUENCE_PLAN.md): в `distill-*` influence студента по настоящим меткам и (`-tgtteacher`) по выходам учителя, плюс прямые baseline'ы учителя — BoostIn (`tree_influence`, только LightGBM), CatBoost LFC, Data-OOB. `tree_influence` ставится из git с Cython (см. requirements.txt).
 - На выпуклой модели Influence стабильнее, чем на MLP (adult 0.70–0.80 против скачков 0.43–0.74), но всё равно ниже high loss (~0.88–0.99).
 - После дистилляции high loss по ученику остаётся сильным (0.90–0.99); Influence не оживает (~0.42–0.53).
 - Систематический шум труднее для Data-OOB и high loss (wine Data-OOB 0.54–0.67 против 0.96–0.98 на случайном); LiSSA иногда лучше всех (wine/covertype ~0.88–0.95). Оговорка: LiSSA в pyDVL решает (H + (λ + scale·dampen)I)⁻¹g, т.е. при настройках main это influence с сильным демпфированием λ_eff ≈ 3–12 (близко к скалярному произведению градиентов), а не «более точный» обратный гессиан; λ_eff пишется в results.json (`effective_damping`), см. `docs/PYDVL_AUDIT.md`.
@@ -46,7 +47,7 @@
 ## Запуск
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests -q          # 46 тестов, ~20 с (включая e2e-смоук)
+.venv\Scripts\python.exe -m pytest tests -q          # 51 тест, ~20 с (включая e2e-смоук)
 .venv\Scripts\python.exe run_study.py pilot          # ~10 мин, results/pilot (только для проверки)
 powershell -ExecutionPolicy Bypass -File .\run_overnight.ps1   # main + sweep + ext + графики; см. оценку ниже
 .venv\Scripts\python.exe run_study.py status         # что готово / что упало
