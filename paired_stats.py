@@ -20,6 +20,46 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from study.summary import load, paired_test, removal_auc, sign  # noqa: E402
 
 
+def _auc_by_seed(data, study, ds, m):
+    return {s: r["detection"]["auc"] for s, r in data.get(study, {}).get(ds, {}).get(m, {}).items()
+            if "detection" in r}
+
+
+def cross_study(data):
+    """Detection AUC of the same method in two studies, paired by seed (same split, same corrupted labels)."""
+    pairs = []   # (question, study A, study B, methods)
+    for mo in ("lightgbm", "xgboost", "catboost", "random_forest"):
+        pairs.append((f"{mo} - MLP", f"models-{mo}-noise10", "noise10", ["LOO", "LossHigh"]))
+    for t in ("lightgbm", "catboost"):
+        pairs.append((f"student of {t} - MLP direct", f"distill-{t}-noise10", "noise10",
+                      ["Influence", "LissaInfluence", "LossHigh"]))
+    from study.config import DAMPINGS
+    for d in DAMPINGS:
+        pairs.append((f"linear - MLP (damping {d:g})", f"damp-linear-{d:g}", f"damp-mlp-{d:g}",
+                      ["Influence", "LissaInfluence"]))
+    for pct in (5, 10, 20):
+        pairs.append((f"systematic - random noise {pct} %", f"sysnoise{pct}", f"noise{pct}",
+                      ["KNNShapley", "DataOOB", "Influence", "LissaInfluence", "LossHigh"]))
+    out = ["", "# Cross-study comparisons (detection AUC, paired by seed)", "",
+           "| comparison | dataset | method | n | AUC A | AUC B | A − B, 95 % CI | p |", "|---|---|---|---|---|---|---|---|"]
+    n_rows = 0
+    for q, sa, sb, methods in pairs:
+        if sa not in data or sb not in data:
+            continue
+        for ds in sorted(set(data[sa]) & set(data[sb])):
+            for m in methods:
+                A, B = _auc_by_seed(data, sa, ds, m), _auc_by_seed(data, sb, ds, m)
+                common = sorted(set(A) & set(B))
+                if not common:
+                    continue
+                t = paired_test([A[s] - B[s] for s in common])
+                out.append(f"| {q} | {ds} | {m} | {t['n']} | {np.mean([A[s] for s in common]):.3f} | "
+                           f"{np.mean([B[s] for s in common]):.3f} | {t['mean']:+.3f} [{t['ci_lo']:+.3f}, "
+                           f"{t['ci_hi']:+.3f}] | {t['p_t']:.3f} |")
+                n_rows += 1
+    return "\n".join(out) + "\n" if n_rows else ""
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--root", default="results")
@@ -66,7 +106,7 @@ def main():
                                f"[{t['ci_lo']:+.3f}, {t['ci_hi']:+.3f}] | {t['p_t']:.3f} |")
     text = ("# Paired comparison with random removal\n\n'removed = auc' is the mean signed gain over the whole removal "
             "grid (relative to the full-data model).\n\n" + "\n".join(lines) +
-            "\n\n# Detection of corrupted points\n\n" + "\n".join(det) + "\n")
+            "\n\n# Detection of corrupted points\n\n" + "\n".join(det) + "\n" + cross_study(data))
     os.makedirs(a.out, exist_ok=True)
     path = os.path.join(a.out, "paired_stats.md")
     with open(path, "w", encoding="utf-8") as fh:

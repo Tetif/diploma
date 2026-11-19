@@ -16,7 +16,9 @@ Figures:
   5_paired_vs_random.png  per-seed gain over random removal at 10 % (same seed / split), tick = mean, p = t-test
   6_removal_auc.png       mean gain over the full-data model across the removal grid; dot = seed
   7_sensitivity.png       sweep (adult): detection AUC and gain vs random as a function of each parameter
-  summary.md / summary.csv
+  8-13                    secondary studies (models, convex, distillation, transfer, systematic noise, cost):
+                          see plot_extensions.py
+  summary.md / summary.csv / cost.csv / transfer.csv
 Requires: matplotlib, numpy, scipy.
 """
 import argparse
@@ -37,10 +39,11 @@ from study.summary import load, paired_test, removal_auc, sign  # noqa: E402
 
 ORDER = ["LOO", "TMCShapley", "KNNShapley", "DataOOB", "Influence", "LissaInfluence", "LossHigh"]
 LABELS = {"LOO": "LOO", "TMCShapley": "TMC-Shapley", "KNNShapley": "KNN-Shapley", "DataOOB": "Data-OOB",
-          "Influence": "Influence", "LissaInfluence": "LiSSA", "LossHigh": "high loss", "random": "random"}
+          "Influence": "Influence", "LissaInfluence": "LiSSA", "LossHigh": "high loss", "random": "random", "CatBoostLFC": "CatBoost LFC"}
 # one fixed colour per method (colour follows the entity, never its rank)
 COLORS = {"LOO": "#2a78d6", "TMCShapley": "#6250d6", "KNNShapley": "#1baf7a", "DataOOB": "#eda100",
-          "Influence": "#eb6834", "LissaInfluence": "#e87ba4", "LossHigh": "#008300", "random": "#8a8984"}
+          "Influence": "#eb6834", "LissaInfluence": "#e87ba4", "LossHigh": "#008300", "random": "#8a8984",
+          "CatBoostLFC": "#7a4a1e"}
 DS_ORDER = ["wine", "housing", "adult", "covertype"]
 INK, INK2, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1", "#fcfcfb"
 
@@ -314,7 +317,7 @@ def fig_removal_auc(sd, outdir, fname="6_removal_auc.png"):
 
 
 def fig_sensitivity(data, outdir):
-    from study.config import SWEEP_GRID
+    from study.config import SWEEP_GRID, sweep_study
     params = [p for p in SWEEP_GRID if any(s.startswith(f"sweep-{p}-") for s in data)]
     if not params:
         return None
@@ -326,7 +329,7 @@ def fig_sensitivity(data, outdir):
             ax = axes[row][col]
             per_m = defaultdict(lambda: ([], [], []))
             for xi, v in enumerate(values):
-                st = data.get(f"sweep-{p}-{v}", {})
+                st = data.get(sweep_study(p, v), {})
                 for ds, runs in st.items():
                     rnd = runs.get("random", {})
                     for m in methods_in(runs):
@@ -446,7 +449,10 @@ def main():
     paired = fig_paired(sc, sn, a.out)
     fig_removal_auc(sc, a.out)
     sens = fig_sensitivity(data, a.out)
-    write_summary(data, [s for s in (a.clean, a.noise) if s in data], a.out, paired, sens)
+    import plot_extensions
+    plot_extensions.make_all(sys.modules[__name__], data, a.out)
+    write_summary(data, [s for s in (a.clean, a.noise) if s in data] + plot_extensions.ext_studies(data), a.out,
+                  paired, sens)
 
 
 if __name__ == "__main__":
