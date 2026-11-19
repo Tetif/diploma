@@ -1,8 +1,10 @@
+import os
+
 import torch
 
 # ===== ВЫБОР ДАТАСЕТА =====
 # Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine', 'covertype', 'electric', 'mnist', 'imdb', 'cifar10'
-CURRENT_DATASET = 'zillow'
+CURRENT_DATASET = 'adult'  # zillow почти без сигнала (см. AUDIT.md §4)
 
 # ===== РЕЖИМ ОБУЧЕНИЯ (FIT MODE) =====
 # 'normal'   — оптимальные гиперпараметры (по умолчанию)
@@ -24,8 +26,9 @@ CACHE_DIR = "data_cache"
 USE_CACHE = True
 
 # Настройки вычислений
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-N_JOBS = 8
+# Переопределяются переменными окружения DIPLOMA_DEVICE / DIPLOMA_N_JOBS (run_study.py, run_overnight.ps1).
+DEVICE = os.environ.get('DIPLOMA_DEVICE') or ('cuda' if torch.cuda.is_available() else 'cpu')
+N_JOBS = int(os.environ.get('DIPLOMA_N_JOBS', 8))
 RANDOM_STATE = 42
 
 # Модель и стратегии удаления для main/экспериментов (единая точка настройки)
@@ -323,64 +326,11 @@ def get_metric_metadata(metric_name):
     return METRIC_METADATA[metric_name].copy()
 
 
-# Оптимальные параметры для каждого датасета и модели
-from .datasets.adult_config import ADULT_CONFIG, ADULT_UNDERFIT_CONFIG, ADULT_OVERFIT_CONFIG
-from .datasets.housing_config import HOUSING_CONFIG, HOUSING_UNDERFIT_CONFIG, HOUSING_OVERFIT_CONFIG
-from .datasets.wine_config import WINE_CONFIG, WINE_UNDERFIT_CONFIG, WINE_OVERFIT_CONFIG
-from .datasets.zillow_config import ZILLOW_CONFIG, ZILLOW_UNDERFIT_CONFIG, ZILLOW_OVERFIT_CONFIG
-from .datasets.covertype_config import COVERTYPE_CONFIG, COVERTYPE_UNDERFIT_CONFIG, COVERTYPE_OVERFIT_CONFIG
-from .datasets.electric_config import ELECTRIC_CONFIG, ELECTRIC_UNDERFIT_CONFIG, ELECTRIC_OVERFIT_CONFIG
-from .datasets.mnist_config import MNIST_CONFIG, MNIST_UNDERFIT_CONFIG, MNIST_OVERFIT_CONFIG
-from .datasets.imdb_config import IMDB_CONFIG, IMDB_UNDERFIT_CONFIG, IMDB_OVERFIT_CONFIG
-from .datasets.cifar10_config import CIFAR10_CONFIG, CIFAR10_UNDERFIT_CONFIG, CIFAR10_OVERFIT_CONFIG
+# Гиперпараметры моделей для каждого датасета и fit-режима (normal/underfit/overfit)
+# лежат в config/model_params/<dataset>.json (раньше — 9 файлов config/datasets/*_config.py).
+from .model_params import load_all_model_params
 
-DATASET_MODEL_CONFIGS = {
-    'adult': {
-        'normal': ADULT_CONFIG,
-        'underfit': ADULT_UNDERFIT_CONFIG,
-        'overfit': ADULT_OVERFIT_CONFIG,
-    },
-    'housing': {
-        'normal': HOUSING_CONFIG,
-        'underfit': HOUSING_UNDERFIT_CONFIG,
-        'overfit': HOUSING_OVERFIT_CONFIG,
-    },
-    'wine': {
-        'normal': WINE_CONFIG,
-        'underfit': WINE_UNDERFIT_CONFIG,
-        'overfit': WINE_OVERFIT_CONFIG,
-    },
-    'zillow': {
-        'normal': ZILLOW_CONFIG,
-        'underfit': ZILLOW_UNDERFIT_CONFIG,
-        'overfit': ZILLOW_OVERFIT_CONFIG,
-    },
-    'covertype': {
-        'normal': COVERTYPE_CONFIG,
-        'underfit': COVERTYPE_UNDERFIT_CONFIG,
-        'overfit': COVERTYPE_OVERFIT_CONFIG,
-    },
-    'electric': {
-        'normal': ELECTRIC_CONFIG,
-        'underfit': ELECTRIC_UNDERFIT_CONFIG,
-        'overfit': ELECTRIC_OVERFIT_CONFIG,
-    },
-    'mnist': {
-        'normal': MNIST_CONFIG,
-        'underfit': MNIST_UNDERFIT_CONFIG,
-        'overfit': MNIST_OVERFIT_CONFIG,
-    },
-    'imdb': {
-        'normal': IMDB_CONFIG,
-        'underfit': IMDB_UNDERFIT_CONFIG,
-        'overfit': IMDB_OVERFIT_CONFIG,
-    },
-    'cifar10': {
-        'normal': CIFAR10_CONFIG,
-        'underfit': CIFAR10_UNDERFIT_CONFIG,
-        'overfit': CIFAR10_OVERFIT_CONFIG,
-    },
-}
+DATASET_MODEL_CONFIGS = load_all_model_params()
 
 # Функция для получения конфигов модели для конкретного датасета
 def get_model_config(dataset_name, model_type):
@@ -473,4 +423,4 @@ __all__ = [
     'get_metric_metadata',
     'get_n_remove_list',
     'get_selected_loss_removal_methods',
-]
+]
