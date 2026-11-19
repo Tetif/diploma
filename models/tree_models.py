@@ -51,6 +51,39 @@ def _sklearn_style_proba(model, X):
     out[:, classes] = p
     return out
 
+def _class_weighting(params: dict, y, task_type: str, lib: str):
+    """[AUDIT-FIX P8] params['class_weight'] == 'balanced' -> native class weighting of each library, computed on
+    the labels of THIS fit (LOO / removal refits use their own subset), like the MLP's pos_weight = neg/pos.
+
+    binary:      LightGBM / XGBoost scale_pos_weight = neg/pos; CatBoost auto_class_weights='Balanced';
+                 RandomForest class_weight='balanced'.
+    multiclass:  LightGBM / XGBoost have no class_weight in this API -> per-sample weights n / (K * n_c)
+                 (= sklearn 'balanced'); CatBoost / RF as above.
+    Returns (params for the library without the key, sample_weight or None, info dict)."""
+    p = dict(params)
+    cw = p.pop('class_weight', None)
+    if cw in (None, 'none') or task_type not in CLASSIFICATION_TASKS:
+        return p, None, {}
+    if cw != 'balanced':
+        raise ValueError(f"class_weight must be 'balanced' or None, got {cw!r}")
+    y = np.asarray(y).astype(int).ravel()
+    if lib == 'catboost':
+        p['auto_class_weights'] = 'Balanced'
+        return p, None, {'auto_class_weights': 'Balanced'}
+    if lib == 'random_forest':
+        p['class_weight'] = 'balanced'
+        return p, None, {'class_weight': 'balanced'}
+    if task_type == 'binary_classification':
+        pos = int((y == 1).sum())
+        spw = float((y == 0).sum()) / max(pos, 1)
+        p['scale_pos_weight'] = spw
+        return p, None, {'scale_pos_weight': spw}
+    classes, counts = np.unique(y, return_counts=True)
+    w_c = len(y) / (len(classes) * counts.astype(float))
+    w = w_c[np.searchsorted(classes, y)]
+    return p, w, {'sample_weight': 'balanced', 'class_weights': {int(c): float(v) for c, v in zip(classes, w_c)}}
+
+
 class LightGBMModel(BaseModel):
     def __init__(self, params=None, task_type='regression', **kwargs):
         super().__init__()
@@ -78,12 +111,14 @@ class LightGBMModel(BaseModel):
             return self._fit(X, y, X_val, y_val, **kwargs)
 
     def _fit(self, X, y, X_val=None, y_val=None, **kwargs):
-        train_data = lgb.Dataset(X, label=y)
+        # [AUDIT-FIX P8] optional class weighting (scale_pos_weight / balanced sample weights)
+        params, weight, self.class_weighting_ = _class_weighting(self.params, y, self.task_type, 'lightgbm')
+        train_data = lgb.Dataset(X, label=y, weight=weight)
 
         # n_estimators from config overrides the default num_boost_round
-        num_boost_round = self.params.get('n_estimators') or kwargs.get('epochs', 1000)
+        num_boost_round = params.get('n_estimators') or kwargs.get('epochs', 1000)
         # Exclude n_estimators from native lgb.train params to avoid conflict
-        train_params = {k: v for k, v in self.params.items() if k != 'n_estimators'}
+        train_params = {k: v for k, v in params.items() if k != 'n_estimators'}
 
         if X_val is not None and y_val is not None:
             valid_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
@@ -156,15 +191,15 @@ class XGBoostModel(BaseModel):
                 self.params[key] = kwargs[key]
 
     def fit(self, X, y, **kwargs):
+        params, weight, self.class_weighting_ = _class_weighting(self.params, y, self.task_type, 'xgboost')  # [P8]
         if self.task_type in CLASSIFICATION_TASKS:
-            params = dict(self.params)
             # [AUDIT-FIX D1] multi:softmax has no probabilities; softprob gives the same predict() labels
             if params.get('objective') == 'multi:softmax':
                 params['objective'] = 'multi:softprob'
             self.model = xgb.XGBClassifier(**params)
         else:
-            self.model = xgb.XGBRegressor(**self.params)
-        self.model.fit(X, y)
+            self.model = xgb.XGBRegressor(**params)
+        self.model.fit(X, y, sample_weight=weight)
         return 0.0
 
     def predict(self, X):
@@ -211,10 +246,11 @@ class RandomForestModel(BaseModel):
                 self.params[key] = kwargs[key]
 
     def fit(self, X, y, **kwargs):
+        params, _, self.class_weighting_ = _class_weighting(self.params, y, self.task_type, 'random_forest')  # [P8]
         if self.task_type in CLASSIFICATION_TASKS:
-            self.model = RandomForestClassifier(**self.params)
+            self.model = RandomForestClassifier(**params)
         else:
-            self.model = RandomForestRegressor(**self.params)
+            self.model = RandomForestRegressor(**params)
         self.model.fit(X, y)
         return 0.0
 
@@ -262,10 +298,11 @@ class CatBoostModel(BaseModel):
                 self.params[key] = kwargs[key]
 
     def fit(self, X, y, **kwargs):
+        params, _, self.class_weighting_ = _class_weighting(self.params, y, self.task_type, 'catboost')  # [P8]
         if self.task_type in CLASSIFICATION_TASKS:
-            self.model = cb.CatBoostClassifier(**self.params)
+            self.model = cb.CatBoostClassifier(**params)
         else:
-            self.model = cb.CatBoostRegressor(**self.params)
+            self.model = cb.CatBoostRegressor(**params)
         self.model.fit(X, y, verbose=False)
         return 0.0
 

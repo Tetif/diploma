@@ -53,6 +53,8 @@ class RunSpec:
     knn_k: int = 5
     oob_estimators: int = 200
     sample_scale: float = 1.0                 # multiplies the dataset's n_train (sweep: 0.1 / 0.3 / 1.0)
+    tree_class_weight: Optional[str] = 'balanced'  # [AUDIT-FIX P8] classification trees (also distillation
+                                              # teachers): 'balanced' (like the MLP's pos_weight) | None
 
     def to_dict(self) -> dict:
         return asdict(self)
