@@ -176,6 +176,18 @@ def convex_specs():
     return out
 
 
+# 2b. [P15] DirectInfluence on the MLP with larger damping (the default ~1e-5..1e-4 is ill-conditioned on the
+# non-convex Hessian, AUC ~ 0.5). Separate studies, so the original results stay intact; damp-mlp-1 already
+# exists for wine / housing / adult, here it is added for covertype (explicit Hessian ~7.6 GB, one at a time).
+DAMP_HIGH_METHODS = ['Influence', 'random']
+
+
+def damp_high_specs():
+    return [(RunSpec('damp-mlp-0.1', model_architecture='simple', damping=0.1, **_NOISE10),
+             list(DAMP_HIGH_METHODS), list(EXT_DATASETS)),
+            (RunSpec('damp-mlp-1', model_architecture='simple', damping=1.0, **_NOISE10),
+             list(DAMP_HIGH_METHODS), ['covertype'])]
+
 # 3. distillation: tree teacher -> MLP student; influence through the student
 DISTILL_TEACHERS = ['lightgbm', 'catboost']
 DISTILL_METHODS = ['Influence', 'LissaInfluence', 'LossHigh', 'random']

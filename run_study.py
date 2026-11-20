@@ -34,7 +34,7 @@ def _parse():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('command', choices=['main', 'sweep', 'pilot', 'probe', 'estimate', 'status', 'ext',
                                         'estimate-ext'])
-    ap.add_argument('--sections', nargs='*', help='ext: models convex distill noise transfer (default: all)')
+    ap.add_argument('--sections', nargs='*', help='ext: models convex distill noise transfer (default: all); optional: damphigh')
     ap.add_argument('--pilot', action='store_true', help='ext: small pilot (n_train 400) into results/pilot_ext')
     ap.add_argument('--n-train', type=int, default=None, help='override n_train of the subsampled datasets')
     ap.add_argument('--root', default=None, help='results folder (default results/, pilot: results/pilot)')
@@ -262,6 +262,8 @@ def _ext_blocks(section):
         return [(sp, ms, dss, 'seed') for sp, ms, dss in C.models_specs()]
     if section == 'convex':
         return [(sp, ms, dss, 'seed') for sp, ms, dss in C.convex_specs()]
+    if section == 'damphigh':                     # [P15] optional, not in EXT_SECTIONS
+        return [(sp, ms, dss, 'seed') for sp, ms, dss in C.damp_high_specs()]
     if section == 'distill':
         return [(sp, ms, dss, 'seed') for sp, ms, dss in C.distill_specs()]
     if section == 'noise':
