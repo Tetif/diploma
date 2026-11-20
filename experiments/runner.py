@@ -219,7 +219,7 @@ class ExperimentRunner(TrainingMixin, RemovalPhaseMixin):
                     import traceback
                     self.logger.log_message(traceback.format_exc())
 
-        # Сохранение весов влияния в experiment dir для переиспользования (plot_removal_from_weights.py)
+        # Сохранение весов влияния в experiment dir для переиспользования (archive/scripts/plot_removal_from_weights.py)
         if self.logger and scores_raw:
             dataset_name = dataset_config.name if dataset_config and getattr(dataset_config, 'name', None) else 'unknown'
             self.logger.save_influence_weights_to_experiment_dir(

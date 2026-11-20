@@ -199,7 +199,7 @@ class ExperimentLogger:
     ):
         """
         Save influence weights to experiment dir as influence_weights.pkl
-        for later reuse (e.g. plot_removal_from_weights.py).
+        for later reuse (e.g. archive/scripts/plot_removal_from_weights.py).
         """
         from influence.io import save_influence_weights
         from datetime import datetime

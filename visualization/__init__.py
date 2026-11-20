@@ -10,6 +10,3 @@ __all__ = [
     'plot_results_enhanced',
     'plot_training_history'
 ]
-
-# Timing analysis module is available as a separate import
-

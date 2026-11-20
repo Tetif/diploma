@@ -55,10 +55,11 @@ Thumbs.db
 /zillow/
 /zillow/zillow_main_new_models.py
 
-# New study pipeline (run_study.py): pilot runs and overnight logs stay local
-results/pilot*/
+# Study pipeline (run_study.py): raw per-run results and logs stay local (~50 MB, 9k files);
+# aggregated tables and plots in assets/ are tracked
+results/
+results_backup_*/
 run_logs/
 _distill_run.log
-results/probe/
-results/_logs/
-results/bench_parallel/
+_tmp*/
+scripts/__pycache__/

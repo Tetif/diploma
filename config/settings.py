@@ -126,7 +126,7 @@ REMOVAL_ADAPTIVE_CONFIG = {
     'pytorch_min_layer_width': 4,
 }
 
-# Стратегии удаления для анализа сохранённых influence-весов (scripts/plot_removal_from_weights.py)
+# Стратегии удаления для анализа сохранённых influence-весов (archive/scripts/plot_removal_from_weights.py)
 # Единственный источник — список в MODEL_RUN_CONFIG.
 REMOVAL_STRATEGIES = MODEL_RUN_CONFIG['removal_strategies']
 
@@ -401,7 +401,7 @@ def get_selected_loss_removal_methods():
             selected_methods.append(mapped_name)
     return selected_methods
 
-# Настройки для synthetic_data экспериментов
+# Настройки для synthetic_data экспериментов (код в archive/synthetic_data)
 SYNTHETIC_DATA_CONFIG = {
     'batch_size': 32,
     'learning_rate': 1e-3,
