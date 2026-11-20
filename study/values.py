@@ -110,6 +110,17 @@ def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tu
         import config.settings as S
         if method in ('Influence', 'LissaInfluence') and not trainer.is_torch:
             raise NotApplicable(f'{method} needs a torch model (MLP, linear or distilled student)')
+        if method == 'Influence':
+            # [AUDIT-FIX P13] DirectInfluence builds the explicit P x P Hessian (peak ~8.5 x P^2 x 4 B, see
+            # study/parallel.py); e.g. sweep fit_mode=overfit on adult (P ~ 0.77 M) would need terabytes
+            from study.parallel import HESSIAN_FACTOR, hessian_limit_mb
+            nn_ = InfluenceMethods._extract_torch_model(model)
+            n_par = int(sum(p.numel() for p in nn_.parameters())) if nn_ is not None else 0
+            need = HESSIAN_FACTOR * n_par * n_par * 4 / 2 ** 20
+            info['hessian'] = {'n_params': n_par, 'expected_peak_mb': round(need)}
+            if need > hessian_limit_mb():
+                raise NotApplicable(f'explicit Hessian of {n_par} params needs ~{need / 1024:.0f} GB '
+                                    f'(> {hessian_limit_mb() / 1024:.0f} GB limit); use LiSSA')
         pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
         im = InfluenceMethods(None, dataset_config=sp.cfg)
         im.seed = int(seed)                     # [AUDIT-FIX P2/P4] TMC permutations, LiSSA batch shuffling

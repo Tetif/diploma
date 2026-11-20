@@ -50,7 +50,9 @@ def _parse():
                     help='[P12] worker processes (1 = sequential, the old behaviour); each gets --threads threads '
                          'and --n-jobs pyDVL jobs')
     ap.add_argument('--min-free-mb', type=float, default=1500.0,
-                    help='[P12] start a new unit only while this much RAM is free (or nothing runs)')
+                    help='[P12/P13] RAM kept free on top of the expected peaks of the running units')
+    ap.add_argument('--max-heavy', type=int, default=1,
+                    help='[P13] max concurrent heavy-memory units (DirectInfluence Hessian, > 2.5 GB expected)')
     return ap.parse_args()
 
 
@@ -174,7 +176,7 @@ def _execute(a, root, log, prog, blocks):
         return None
     from study.parallel import run_parallel
     stats = run_parallel(root, log, prog, blocks, a.workers, a.threads, a.n_jobs, a.device, retry, a.min_free_mb,
-                         repo=str(ROOT))
+                         repo=str(ROOT), max_heavy=getattr(a, 'max_heavy', 1))
     log(f'parallel: {stats}')
     return stats
 

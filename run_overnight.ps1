@@ -20,7 +20,9 @@ if DIPLOMA_WEBHOOK_URL is not set nothing is sent; a failing webhook never stops
                                                   # any other name gets the raw key as its value
 Parallel mode [AUDIT-FIX P12]: -Workers N worker processes x -ThreadsPerWorker M threads (pyDVL n_jobs = torch/BLAS
 threads = M per worker). Default 6 x 2 for an i7-12700H (14 cores / 20 threads, 16 GB); -Workers 1 = the old
-sequential run with -NJobs / -Threads. A new unit starts only while >= -MinFreeMB MB of RAM are free.
+sequential run with -NJobs / -Threads. [P13] Memory-aware: a unit starts only if its expected peak (+ the
+expected growth of the running units + -MinFreeMB) fits into the free RAM; heavy units (DirectInfluence with the
+explicit Hessian, ~7.6 GB on covertype) run in their own process, at most -MaxHeavy (default 1) at a time.
 Worker logs: results\_logs\worker-<pid>.log (lines also prefixed [w<pid>] in the main log).
 Other knobs: -NJobs (parallel pyDVL refits), -Threads (torch/BLAS threads per process), -Device cpu|cuda.
 Logs: run_logs\overnight-<timestamp>.log (+ results\_logs\*.log written by run_study.py).
@@ -29,6 +31,7 @@ param(
     [int]$Workers = 6,
     [int]$ThreadsPerWorker = 2,
     [int]$MinFreeMB = 1500,
+    [int]$MaxHeavy = 1,
     [int]$NJobs = 8,
     [int]$Threads = 2,
     [string]$Device = "cpu",
@@ -62,7 +65,7 @@ function Step([string]$name, [string[]]$cmdArgs) {
 
 if ($Workers -gt 1) {
     $common = @("--workers", "$Workers", "--n-jobs", "$ThreadsPerWorker", "--threads", "$ThreadsPerWorker",
-                "--min-free-mb", "$MinFreeMB", "--device", $Device)
+                "--min-free-mb", "$MinFreeMB", "--max-heavy", "$MaxHeavy", "--device", $Device)
 } else {
     $common = @("--n-jobs", "$NJobs", "--threads", "$Threads", "--device", $Device)
 }

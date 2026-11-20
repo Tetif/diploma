@@ -106,3 +106,38 @@ def test_parallel_equals_sequential_and_resumes(tmp_path, monkeypatch):
     assert st2['units'] == 0                                          # resume: nothing left
     assert not list((tmp_path / 'par' / '_logs' / 'running').glob('*.json'))
     assert not (tmp_path / 'par' / '_logs' / 'run.lock').exists()
+
+
+def test_memory_model_flags_covertype_direct_influence_heavy():
+    from study.config import MAIN_DATASETS, MAIN_STUDIES, SWEEP_BASE
+    from study.parallel import HEAVY_MB, WORKER_BASE_MB, mlp_param_count, split_block, unit_mem_mb
+    sp = MAIN_STUDIES['clean']
+    cov, wine = MAIN_DATASETS['covertype'], MAIN_DATASETS['wine']
+    assert mlp_param_count(sp, cov) == 15751                     # 54-128-64-7, matches the trained MLP
+    assert unit_mem_mb(sp, cov, ('Influence',)) > 7000 > HEAVY_MB  # measured peak 7.6 GB
+    assert unit_mem_mb(sp, cov, ('LissaInfluence',)) < HEAVY_MB
+    assert unit_mem_mb(sp, wine, ('Influence',)) < HEAVY_MB
+    over = replace(SWEEP_BASE, fit_mode='overfit')               # P ~ 0.77 M: skipped by compute_values
+    assert unit_mem_mb(over, MAIN_DATASETS['adult'], ('Influence',)) == WORKER_BASE_MB
+    units = split_block(0, 'seed', sp, cov, 0, ['LOO', 'Influence', 'LossHigh', 'random'])
+    assert [u.mem_mb > HEAVY_MB for u in units] == [False, True, False]
+
+
+@pytest.mark.skipif(not HAS_ADULT, reason='adult dataset not available')
+def test_heavy_units_never_run_concurrently(tmp_path, monkeypatch):
+    """heavy_mb=0 makes every unit 'heavy': with max_heavy=1 they must run one at a time, results unchanged."""
+    import config.settings as S
+    from study import io
+    from study.config import DatasetSpec, RunSpec
+    from study.parallel import run_parallel
+    monkeypatch.setattr(S, 'DEVICE', 'cpu')
+    monkeypatch.chdir(ROOT)
+    ds = DatasetSpec('adult', n_train=60, max_holdout=200)
+    sp = RunSpec('hv', model_type='lightgbm', task='noise', noise_rate=0.1, fracs=(10,), strategies=('lowest',))
+    blocks = [(0, 'seed', sp, ds, s, ['LOO', 'LossHigh']) for s in (0, 1)]
+    st = run_parallel(tmp_path, lambda *_: None, None, blocks, 3, 1, 1, 'cpu', repo=ROOT, max_heavy=1, heavy_mb=0.0)
+    assert st['units'] == 4 and st['failed_units'] == 0
+    assert st['max_heavy_running'] == 1 and st['max_running'] == 1
+    for s in (0, 1):
+        r = io.load_json(io.run_dir(tmp_path, 'hv', 'adult', 'LOO', s) / 'results.json')
+        assert r['status'] == 'ok' and r['timing']['values_s'] > 0 and 'curves_s' in r['timing']

@@ -49,6 +49,7 @@ class Unit:
     sources: Optional[list] = None
     cost: float = 0.0
     block: Tuple[str, str, int] = field(default=('', '', 0))
+    mem_mb: float = 0.0             # [P13] expected peak RSS of the worker while running this unit
 
     @property
     def key(self) -> str:
@@ -73,14 +74,76 @@ def unit_cost(spec, ds, methods, kind='seed') -> float:
     return base + c + 3.0 * f * n * len(spec.fracs) * len(spec.strategies) * len(methods)
 
 
+# ------------------------------------------------------------------ [AUDIT-FIX P13] memory model
+# DirectInfluence materialises the full Hessian (P x P, float32) of the MLP. pyDVL's hessian() does it with
+# torch.func.hessian (jacfwd over all P directions) per mini-batch plus an accumulator, and linalg.solve
+# copies it again: measured peak ~ 8 x H on top of the worker (covertype MLP 54-128-64-7, P = 15751,
+# H = 0.95 GB -> 7.6 GB peak; adult 74-64-32-16-1, P = 7425 -> ~2.6 GB). Everything else stays ~1-1.5 GB.
+WORKER_BASE_MB = 1200.0
+HESSIAN_FACTOR = 8.5
+HEAVY_MB = 2500.0                   # units above this are 'heavy': own process, at most max_heavy at a time
+N_FEATURES = {'wine': 11, 'housing': 12, 'adult': 74, 'covertype': 54}     # after preprocessing
+N_OUTPUTS = {'covertype': 7}
+_P_CACHE = {}
+
+
+def _layers(dataset: str, spec) -> list:
+    if spec.distill:                # the student is SimpleNN with the default layers
+        from models.torch_models import DEFAULT_PYTORCH_PARAMS
+        return list(DEFAULT_PYTORCH_PARAMS['simple']['layers'])
+    if spec.model_architecture == 'linear':
+        return []
+    try:
+        import config.settings as S
+        old = S.MODEL_FIT_MODE
+        S.MODEL_FIT_MODE = spec.fit_mode
+        try:
+            cfg = S.get_model_config(dataset, 'pytorch')
+        finally:
+            S.MODEL_FIT_MODE = old
+        return list(cfg['simple']['layers'])
+    except Exception:  # noqa: BLE001 - conservative fallback
+        return [128, 64]
+
+
+def mlp_param_count(spec, ds) -> int:
+    key = (ds.name, spec.distill, spec.model_architecture, spec.fit_mode)
+    if key not in _P_CACHE:
+        sizes = [N_FEATURES.get(ds.name, 64)] + _layers(ds.name, spec) + [N_OUTPUTS.get(ds.name, 1)]
+        _P_CACHE[key] = int(sum(a * b + b for a, b in zip(sizes[:-1], sizes[1:])))
+    return _P_CACHE[key]
+
+
+def unit_mem_mb(spec, ds, methods) -> float:
+    """Expected peak RSS (MB) of a worker running this unit (conservative)."""
+    mem = WORKER_BASE_MB + (300.0 if ds.name == 'covertype' else 0.0)
+    if 'Influence' in methods and (spec.model_type == 'pytorch' or spec.distill):
+        p = mlp_param_count(spec, ds)
+        h = HESSIAN_FACTOR * p * p * 4 / 2 ** 20
+        if h <= hessian_limit_mb():     # otherwise compute_values skips it at once (NotApplicable)
+            mem += h
+    return mem
+
+
+def hessian_limit_mb() -> float:
+    """Largest expected DirectInfluence peak that is attempted: 60 % of the physical RAM."""
+    try:
+        import psutil
+        return 0.6 * psutil.virtual_memory().total / 2 ** 20
+    except Exception:  # noqa: BLE001
+        return 9000.0
+
+
 def split_block(phase, kind, spec, ds, seed, methods, sources=None) -> List[Unit]:
     blk = (spec.study, ds.name, int(seed))
     if kind == 'transfer':
-        return [Unit(phase, kind, spec, ds, seed, None, sources, unit_cost(spec, ds, [], 'transfer'), blk)]
+        return [Unit(phase, kind, spec, ds, seed, None, sources, unit_cost(spec, ds, [], 'transfer'), blk,
+                     unit_mem_mb(spec, ds, ()))]
     heavy = [m for m in methods if m in HEAVY]
     light = [m for m in methods if m not in HEAVY]
     groups = [(m,) for m in heavy] + ([tuple(light)] if light else [])
-    return [Unit(phase, kind, spec, ds, seed, g, None, unit_cost(spec, ds, g), blk) for g in groups]
+    return [Unit(phase, kind, spec, ds, seed, g, None, unit_cost(spec, ds, g), blk, unit_mem_mb(spec, ds, g))
+            for g in groups]
 
 
 def unit_pending(root, u: Unit, retry_failed: bool = True) -> bool:
@@ -247,10 +310,34 @@ def _shutdown(ex):
                 pass
 
 
+def _rss_mb(pid) -> float:
+    try:
+        import psutil
+        return psutil.Process(pid).memory_info().rss / 2 ** 20
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _marker_pids(log_dir) -> dict:
+    from study import io
+    out = {}
+    for p in (Path(log_dir) / 'running').glob('*.json'):
+        r = io.load_json(p) or {}
+        if r.get('unit'):
+            out[r['unit']] = r.get('pid')
+    return out
+
+
 def run_parallel(root, log, prog, blocks, workers: int, threads: int, n_jobs: int, device: str,
                  retry_failed: bool = True, min_free_mb: float = 1500.0, repo: Optional[str] = None,
-                 on_block_done=None) -> dict:
-    """Execute ``blocks`` with ``workers`` spawn processes. Returns stats (units, peak RSS, wall time)."""
+                 on_block_done=None, max_heavy: int = 1, heavy_mb: float = HEAVY_MB) -> dict:
+    """Execute ``blocks`` with up to ``workers`` spawn processes. Returns stats (units, peak RSS, wall time).
+
+    [AUDIT-FIX P13] memory-aware dispatch: every unit has an expected peak (``unit_mem_mb``). A unit starts only
+    if its peak plus the still-expected growth of the running units plus ``min_free_mb`` fits into the RAM that is
+    free now (the first unit always starts). Heavy units (> ``heavy_mb``) run in a separate pool whose process
+    exits after every unit (the allocator keeps the Hessian's memory otherwise), at most ``max_heavy`` at a time.
+    LPT order is kept: if the longest pending unit does not fit, the next one that fits is started."""
     import multiprocessing as mp
     from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
     from concurrent.futures.process import BrokenProcessPool
@@ -261,12 +348,10 @@ def run_parallel(root, log, prog, blocks, workers: int, threads: int, n_jobs: in
     for stale in (log_dir / 'running').glob('*.json'):      # markers of an interrupted run
         stale.unlink()
     stats = {'units': 0, 'failed_units': 0, 'max_worker_peak_rss_mb': 0.0, 'min_avail_mb': _avail_mb(),
-             'wall_s': 0.0}
+             'wall_s': 0.0, 'max_heavy_running': 0, 'max_running': 0}
     t_all = time.time()
+    max_heavy = max(1, int(max_heavy))
     with RootLock(root):
-        all_blocks = Counter()
-        for phase, kind, spec, ds, seed, ms in blocks:
-            all_blocks[(spec.study, ds.name, int(seed))] += 0
         phases = sorted({b[0] for b in blocks})
         for phase in phases:
             units = plan(root, [b for b in blocks if b[0] == phase], retry_failed)
@@ -275,54 +360,86 @@ def run_parallel(root, log, prog, blocks, workers: int, threads: int, n_jobs: in
             n_skip = sum(1 for b in blocks if b[0] == phase) - len(left)
             if prog is not None:
                 prog.part += max(n_skip, 0)         # blocks already complete (resume)
+            n_heavy = sum(u.mem_mb > heavy_mb for u in units)
             log(f'phase {phase}: {len(units)} units in {len(left)} blocks ({n_skip} blocks already done), '
+                f'{n_heavy} heavy (> {heavy_mb:.0f} MB, max {max_heavy} at a time), '
                 f'workers={workers} x threads={threads} (pyDVL n_jobs={n_jobs})')
-            queue, attempts = deque(units), Counter()
+            queue, attempts = list(units), Counter()
             while queue:
                 ctx = mp.get_context('spawn')
+                init = dict(initializer=_worker_init, initargs=(threads, n_jobs, device, str(log_dir), repo))
+                light = ProcessPoolExecutor(max_workers=workers, mp_context=ctx,
+                                            max_tasks_per_child=MAX_TASKS_PER_CHILD, **init)
+                heavy = ProcessPoolExecutor(max_workers=max_heavy, mp_context=ctx, max_tasks_per_child=1, **init)
                 running = {}
-                ex = ProcessPoolExecutor(max_workers=workers, mp_context=ctx, initializer=_worker_init,
-                                         initargs=(threads, n_jobs, device, str(log_dir), repo),
-                                         max_tasks_per_child=MAX_TASKS_PER_CHILD)
                 try:
-                    if True:
-                        while queue or running:
-                            while queue and len(running) < workers and (not running or _avail_mb() > min_free_mb):
-                                u = queue.popleft()
-                                attempts[u.key] += 1
-                                running[ex.submit(_worker_run, u, root, retry_failed)] = u
-                            done, _ = wait(list(running), timeout=20, return_when=FIRST_COMPLETED)
-                            stats['min_avail_mb'] = min(stats['min_avail_mb'], _avail_mb())
-                            for f in done:
-                                u = running.pop(f)
-                                res = f.result()
-                                stats['units'] += 1
-                                stats['max_worker_peak_rss_mb'] = max(stats['max_worker_peak_rss_mb'],
-                                                                      res['peak_rss_mb'] or 0.0)
-                                if res['error']:
-                                    stats['failed_units'] += 1
-                                log(f'unit done {u.key} in {res["elapsed_s"]:.0f}s (w{res["pid"]}, peak '
-                                    f'{res["peak_rss_mb"]:.0f} MB){" ERROR " + res["error"] if res["error"] else ""}'
-                                    f' | left {len(queue) + len(running)}')
-                                left[u.block] -= 1
-                                if left[u.block] == 0:
-                                    sp, ds, seed = info[u.block]
-                                    if on_block_done:
-                                        on_block_done(sp, ds, seed)
-                                    elif prog is not None:
-                                        prog.block_done(sp, ds.name, seed)
+                    while queue or running:
+                        while queue and len(running) < workers:
+                            pids = _marker_pids(log_dir)
+                            growth = sum(max(0.0, r.mem_mb - _rss_mb(pids[r.key]) if r.key in pids else r.mem_mb)
+                                         for r in running.values())
+                            budget = _avail_mb() - growth - min_free_mb
+                            n_h = sum(r.mem_mb > heavy_mb for r in running.values())
+                            pick = None
+                            for j, u in enumerate(queue):            # LPT order, first unit that fits
+                                if u.mem_mb > heavy_mb and n_h >= max_heavy:
+                                    continue
+                                if not running or u.mem_mb <= budget:
+                                    pick = j
+                                    break
+                            if pick is None:
+                                break
+                            u = queue.pop(pick)
+                            attempts[u.key] += 1
+                            ex = heavy if u.mem_mb > heavy_mb else light
+                            running[ex.submit(_worker_run, u, root, retry_failed)] = u
+                            stats['max_running'] = max(stats['max_running'], len(running))
+                            stats['max_heavy_running'] = max(stats['max_heavy_running'],
+                                                             sum(r.mem_mb > heavy_mb for r in running.values()))
+                            if u.mem_mb > heavy_mb:
+                                log(f'start heavy unit {u.key} (expected {u.mem_mb:.0f} MB, free '
+                                    f'{_avail_mb():.0f} MB)')
+                        if not running:
+                            break
+                        done, _ = wait(list(running), timeout=10, return_when=FIRST_COMPLETED)
+                        stats['min_avail_mb'] = min(stats['min_avail_mb'], _avail_mb())
+                        for f in done:
+                            u = running.pop(f)
+                            res = f.result()
+                            stats['units'] += 1
+                            stats['max_worker_peak_rss_mb'] = max(stats['max_worker_peak_rss_mb'],
+                                                                  res['peak_rss_mb'] or 0.0)
+                            if res['error']:
+                                stats['failed_units'] += 1
+                            log(f'unit done {u.key} in {res["elapsed_s"]:.0f}s (w{res["pid"]}, process peak '
+                                f'{res["peak_rss_mb"]:.0f} MB, expected {u.mem_mb:.0f})'
+                                f'{" ERROR " + res["error"] if res["error"] else ""}'
+                                f' | left {len(queue) + len(running)}')
+                            left[u.block] -= 1
+                            if left[u.block] == 0:
+                                sp, ds, seed = info[u.block]
+                                if on_block_done:
+                                    on_block_done(sp, ds, seed)
+                                elif prog is not None:
+                                    prog.block_done(sp, ds.name, seed)
                 except BrokenProcessPool as e:
                     lost = list(running.values())
                     log(f'process pool broke ({e}); {len(lost)} running units: '
                         + ', '.join(u.key for u in lost))
+                    retry = []
                     for u in lost:
                         if attempts[u.key] < 2:
-                            queue.appendleft(u)
+                            retry.append(u)
                         else:
                             stats['failed_units'] += 1
                             log(f'giving up on {u.key} (crashed twice)')
                             left[u.block] -= 1
+                    # retried units go back in LPT order; the heavy limit / memory check still applies, and
+                    # after a crash heavy units run strictly one at a time for the rest of the phase
+                    queue = sorted(retry + queue, key=lambda x: (-x.cost, x.key))
+                    max_heavy = 1
                 finally:
-                    _shutdown(ex)
+                    _shutdown(light)
+                    _shutdown(heavy)
     stats['wall_s'] = time.time() - t_all
     return stats
