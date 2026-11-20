@@ -100,6 +100,29 @@ def _overrides(dataset: str, spec):
             infl['regularization'] = old_reg
 
 
+def training_sample_weights(trainer, y):
+    """[AUDIT-FIX P14] per-sample weights the model was trained with (up to a constant factor), or (None, 'none').
+
+    Trees with ``tree_class_weight='balanced'`` (LightGBM / XGBoost sample weights, CatBoost
+    auto_class_weights=Balanced, RF class_weight='balanced', binary scale_pos_weight) all weight a class by
+    ~ 1 / n_class; the binary MLP uses BCE pos_weight = n0 / n1 (same ratio). Multiclass MLP, regression and
+    the distilled student are unweighted.
+    """
+    from study.protocol import TREE_MODELS
+    sp = trainer.split
+    if not sp.is_classification or trainer.spec.distill:
+        return None, 'none'
+    y = np.asarray(y).astype(int)
+    if trainer.model_type in TREE_MODELS and trainer.spec.tree_class_weight == 'balanced':
+        from sklearn.utils.class_weight import compute_class_weight
+        cls = np.unique(y)
+        cw = dict(zip(cls.tolist(), compute_class_weight('balanced', classes=cls, y=y)))
+        return np.array([cw[c] for c in y], float), 'balanced'
+    if trainer.model_type == 'pytorch' and 'pos_weight' in trainer.model_params:
+        return np.where(y == 1, float(trainer.model_params['pos_weight']), 1.0), 'pos_weight'
+    return None, 'none'
+
+
 def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tuple[np.ndarray, dict]:
     """Return (values[n_train], info)."""
     sp = trainer.split
@@ -160,7 +183,15 @@ def compute_values(method: str, trainer, model, y_scaler, spec, seed: int) -> Tu
     if method == 'LossHigh':
         from experiments.metrics import compute_per_sample_loss
         pipe = Pipeline([('preproc', trainer.pre), ('model', model)])
-        return -np.asarray(compute_per_sample_loss(pipe, sp.X_train, sp.y_train, sp.task_type), float), info
+        loss = np.asarray(compute_per_sample_loss(pipe, sp.X_train, sp.y_train, sp.task_type), float)
+        # [AUDIT-FIX P14] rank by the per-sample term of the TRAINING objective: with class weighting the
+        # unweighted loss is not comparable across classes (covertype GBDT: uniform flips land mostly in rare,
+        # up-weighted classes, which the trees memorize -> noisy points had LOWER raw loss, AUC 0.36-0.45)
+        w, how = training_sample_weights(trainer, sp.y_train)
+        if w is not None:
+            loss = loss * w
+        info['loss_weighting'] = how
+        return -loss, info
 
     tree = getattr(model, 'base_model', model) if trainer.spec.distill else model   # distill: the teacher
     if method == 'CatBoostLFC':
