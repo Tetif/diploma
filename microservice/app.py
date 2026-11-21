@@ -1,8 +1,8 @@
-"""Веб-интерфейс Streamlit для микросервиса influence."""
+"""Streamlit web UI of the influence microservice."""
 import sys
 from pathlib import Path
 
-# Корень проекта в sys.path (при запуске из каталога microservice/).
+# Project root on sys.path (when started from the microservice/ directory).
 sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 
 import streamlit as st
@@ -39,17 +39,17 @@ st.set_page_config(
 )
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-# Клиентское автообновление страницы ожидания (мс), без sleep на сервере.
+# Client-side auto-refresh of the waiting page (ms), no sleep on the server.
 WORKSPACE_POLL_AUTOREFRESH_MS = 3500
-# Ожидание завершения запуска с вкладки «Рабочая область» (не блокирует UI — см. rerun).
+# Wait for a run started from the Workspace tab to finish (does not block the UI, see rerun).
 WORKSPACE_POLL_EXPERIMENT_ID_KEY = "workspace_poll_experiment_id"
 WORKSPACE_POLL_KIND_KEY = "workspace_poll_kind"
-# Свернуть форму параметров, оставив панель прогресса (не сбрасывает отслеживание эксперимента).
+# Collapse the parameter form, keeping the progress panel (does not reset experiment tracking).
 WORKSPACE_FORM_COLLAPSED_KEY = "workspace_form_collapsed"
-# Запуск вне st.form: session_state внутри submit формы может не сохраниться до следующего клика.
+# Start outside st.form: session_state inside a form submit may not persist until the next click.
 PENDING_INFLUENCE_START_KEY = "workspace_pending_influence_config"
 PENDING_REMOVAL_START_KEY = "workspace_pending_removal_start"
-# connect, read — увеличенный read для тяжёлых JSON
+# connect, read - a longer read timeout for heavy JSON
 DEFAULT_HTTP_TIMEOUT: Tuple[float, float] = (15.0, 900.0)
 _LIGHT_GET_TIMEOUT: Tuple[float, float] = (5.0, 30.0)
 
@@ -57,7 +57,7 @@ _ANALYSIS_TAB_DIST = "Распределение весов influence"
 _ANALYSIS_TAB_REMOVAL = "Удаление данных и метрика"
 _ANALYSIS_TAB_EXAMPLES = "Ресурсы, время и примеры"
 
-# Подписи к color_picker: не обрезать длинные имена методов (NystroemSketchInfluence_lowest и т.д.)
+# color_picker labels: do not truncate long method names (NystroemSketchInfluence_lowest etc.)
 _COLOR_PICKER_LABEL_MAX_CHARS = 120
 
 def _normalize_timeout(
@@ -76,7 +76,7 @@ def _http_get_json_quiet(
     params: Optional[Dict[str, Any]] = None,
     timeout: Optional[Union[float, Tuple[float, float]]] = None,
 ) -> Optional[Dict]:
-    """GET JSON; без st.* (для @st.cache_data)."""
+    """GET JSON; no st.* calls (for @st.cache_data)."""
     t = _normalize_timeout(timeout)
     try:
         response = requests.get(url, timeout=t, params=params)
@@ -180,7 +180,7 @@ def make_api_request(
     timeout: Optional[Union[int, float, Tuple[float, float]]] = None,
     params: Optional[Dict[str, Union[str, int, float, bool]]] = None,
 ) -> Optional[Dict]:
-    """Запрос к FastAPI; по умолчанию до 900 с на чтение ответа."""
+    """Request to FastAPI; up to 900 s to read the response by default."""
     t = _normalize_timeout(timeout)
     try:
         url = f"{API_BASE_URL}{endpoint}"
@@ -225,7 +225,7 @@ def make_api_request(
 
 
 def _resolve_workspace_poll() -> Tuple[Optional[str], Optional[str]]:
-    """(experiment_id, kind) для панели прогресса; kind — influence | removal."""
+    """(experiment_id, kind) for the progress panel; kind is influence | removal."""
     eid = st.session_state.get(WORKSPACE_POLL_EXPERIMENT_ID_KEY)
     kind = st.session_state.get(WORKSPACE_POLL_KIND_KEY)
     if eid and kind in ("influence", "removal"):
@@ -246,7 +246,7 @@ def _resolve_workspace_poll() -> Tuple[Optional[str], Optional[str]]:
 
 
 def _resolve_workspace_influence_poll_id() -> Optional[str]:
-    """ID influence-эксперимента для логики свёрнутой формы."""
+    """ID of the influence experiment for the collapsed-form logic."""
     eid, kind = _resolve_workspace_poll()
     return eid if kind == "influence" else None
 
@@ -284,7 +284,7 @@ def _handle_workspace_poll_terminal(
 
 
 def _render_workspace_active_poll() -> bool:
-    """Панель прогресса над вкладками; True — эксперимент ещё выполняется."""
+    """Progress panel above the tabs; True if the experiment is still running."""
     poll_eid, poll_kind = _resolve_workspace_poll()
     if not poll_eid:
         return False
@@ -356,13 +356,13 @@ def _render_workspace_poll_block(
     max_wait_seconds: int = 3600,
     enable_autorefresh: bool = True,
 ) -> Optional[Dict]:
-    """Показывает прогресс и кнопку остановки.
+    """Show the progress and the stop button.
 
-    Пока эксперимент не в финальном статусе, при наличии ``streamlit-autorefresh``
-    включается клиентское автообновление; иначе статус обновляется кнопкой «Обновить прогресс».
-    Без ``sleep`` и без серверного ``st.rerun()`` в цикле — иначе UI не интерактивен.
+    While the experiment is not in a final status and ``streamlit-autorefresh`` is installed,
+    client-side auto-refresh is enabled; otherwise the status is refreshed with the "Refresh progress" button.
+    No ``sleep`` and no server-side ``st.rerun()`` in a loop, otherwise the UI is not interactive.
 
-    Возвращает финальный JSON статуса при завершении / ошибке / отмене, иначе ``None``.
+    Returns the final status JSON on completion / error / cancellation, otherwise ``None``.
     """
     now = time.time()
     started = float(st.session_state.get("_workspace_poll_started_ts") or now)
@@ -423,8 +423,8 @@ def _render_workspace_poll_block(
     else:
         st.warning("Не удалось получить статус эксперимента; повтор через несколько секунд.")
 
-    # Не используем time.sleep + st.rerun(): выполнение скрипта блокируется до sleep,
-    # виджеты не становятся интерактивными; постоянный rerun даёт лаги.
+    # No time.sleep + st.rerun(): script execution blocks until the sleep ends,
+    # widgets do not become interactive, and constant reruns cause lag.
     refresh_ms = WORKSPACE_POLL_AUTOREFRESH_MS
     if not status_response:
         refresh_ms = max(refresh_ms, 6000)
@@ -456,7 +456,7 @@ def _render_workspace_poll_block(
 
 
 def get_available_datasets() -> List[str]:
-    """Список датасетов с API."""
+    """List of datasets from the API."""
     response = make_api_request("GET", "/info/datasets")
     if response:
         return response.get('datasets', [])
@@ -464,12 +464,12 @@ def get_available_datasets() -> List[str]:
 
 
 def get_available_models() -> List[str]:
-    """Список моделей (кэш)."""
+    """List of models (cached)."""
     return _cached_api_models(API_BASE_URL)
 
 
 def get_available_methods() -> List[str]:
-    """Список методов influence с API."""
+    """List of influence methods from the API."""
     response = make_api_request("GET", "/info/influence-methods")
     if response:
         return response.get('methods', [])
@@ -482,7 +482,7 @@ _TASK_LABEL_RU_UI = {
     "multiclass_classification": "Мультиклассификация",
 }
 
-# Как _METRIC_BY_TASK в microservice/api/models.py
+# Same as _METRIC_BY_TASK in microservice/api/models.py
 _METRIC_BY_TASK_UI = {
     "regression": frozenset({"mae", "rmse", "r2"}),
     "binary_classification": frozenset({"accuracy", "f1", "precision", "recall"}),
@@ -499,7 +499,7 @@ def _is_regression_task_type(task_type: str) -> bool:
 
 
 def _task_type_for_experiment_list_row(row: Dict[str, Any]) -> str:
-    """По полю dataset в списке экспериментов API — task_type из DatasetRegistry."""
+    """task_type from DatasetRegistry, by the dataset field in the API experiment list."""
     ds = row.get("dataset") or row.get("dataset_name")
     if not ds:
         return ""
@@ -512,7 +512,7 @@ def _task_type_for_experiment_list_row(row: Dict[str, Any]) -> str:
 
 
 def get_dataset_details_for_ui() -> List[Dict[str, Any]]:
-    """Метаданные датасетов из DatasetRegistry (без лишнего HTTP к API)."""
+    """Dataset metadata from DatasetRegistry (no extra HTTP calls to the API)."""
     from config import DatasetRegistry
     from config.datasets.dataset_sizes import APPROX_N_SAMPLES, format_sample_size
 
@@ -534,7 +534,7 @@ def get_dataset_details_for_ui() -> List[Dict[str, Any]]:
 
 
 def build_dataset_rows_with_metrics(metric_config: Dict[str, str]) -> List[Dict[str, Any]]:
-    """Добавляет список допустимых метрик по типу задачи (пересечение с конфигом датасета)."""
+    """Add the list of allowed metrics by task type (intersected with the dataset config)."""
     from config import DatasetRegistry
 
     base = get_dataset_details_for_ui()
@@ -562,12 +562,12 @@ def build_dataset_rows_with_metrics(metric_config: Dict[str, str]) -> List[Dict[
 
 
 def load_influence_weights(experiment_id: str, method: str) -> Optional[Dict]:
-    """Веса influence для метода (кэш)."""
+    """Influence weights for a method (cached)."""
     return _cached_api_influence_weights(API_BASE_URL, experiment_id, method)
 
 
 def load_graph_data(experiment_id: str) -> Optional[Dict]:
-    """Данные для графиков removal (кэш)."""
+    """Data for the removal plots (cached)."""
     return _cached_api_graph_data(API_BASE_URL, experiment_id, ())
 
 
@@ -595,7 +595,7 @@ def plot_influence_distribution_stacked_plotly(
     targets: Optional[List[int]] = None,
     group_label: str = "класс",
 ) -> go.Figure:
-    """Все методы сверху вниз; при targets — гистограммы по группам (классы или страты y, overlay)."""
+    """All methods top to bottom; with targets, histograms by group (classes or strata of y, overlay)."""
     methods = list(weights_by_method.keys())
     n = len(methods)
     if n == 0:
@@ -691,14 +691,14 @@ _REMOVAL_SUFFIXES = (
 
 
 def _removal_base_name(method: str) -> str:
-    """Базовое имя метода без суффикса стратегии (для цвета)."""
+    """Base method name without the strategy suffix (for the color)."""
     for suf in _REMOVAL_SUFFIXES:
         if method.endswith(suf):
             return method[: -len(suf)]
     return method
 
 
-# Согласовано с visualization/plots.py (trend_colors)
+# Consistent with visualization/plots.py (trend_colors)
 _DEFAULT_REMOVAL_TRACE_COLORS: Dict[str, str] = {
     "Baseline": "#000000",
     "LOO": "#2ecc71",
@@ -733,8 +733,8 @@ def default_color_for_removal_trace(method: str) -> str:
 
 def _plotly_line_marker_style(method: str, line_color: str) -> Dict[str, Any]:
     """
-    Стили стратегий: lowest — сплошная + крупные залитые маркеры;
-    highest — штрих-пунктир + маркер с обводкой; extremes — пунктир + квадраты.
+    Strategy styles: lowest - solid line + large filled markers;
+    highest - dash-dot + outlined marker; extremes - dotted + squares.
     """
     if method.endswith("_lowest"):
         return {
@@ -827,7 +827,7 @@ def _x_extent_from_removal_data(removal_data: Dict[str, List[Dict]]) -> Tuple[fl
 
 
 def _normalize_smooth_window(window: int, n: int) -> int:
-    """Нечётное окно rolling mean в [3, n]; при n < 3 — 1 (без эффекта в _smooth_1d)."""
+    """Odd rolling mean window in [3, n]; 1 if n < 3 (no effect in _smooth_1d)."""
     if n < 3:
         return 1
     w = int(window)
@@ -839,7 +839,7 @@ def _normalize_smooth_window(window: int, n: int) -> int:
 
 
 def _smooth_1d(y: List[float], window: int) -> List[float]:
-    """Центрированное скользящее среднее; NaN сохраняются на позициях, где среднее не определено."""
+    """Centered moving average; NaN is kept where the mean is undefined."""
     arr = np.asarray(y, dtype=float)
     n = len(arr)
     if n < 3 or window <= 1:
@@ -862,7 +862,7 @@ def plot_removal_impact(
     smooth: bool = False,
     smooth_window: int = 5,
 ) -> go.Figure:
-    """График removal (Plotly); color_overrides: имя серии → #RRGGBB."""
+    """Removal plot (Plotly); color_overrides: series name -> #RRGGBB."""
     fig = go.Figure()
     overrides = color_overrides or {}
 
@@ -1010,10 +1010,10 @@ def plot_removal_impact(
         template="plotly_white",
         height=520,
         font=dict(size=12),
-        # Запас справа и шрифт легенды — длинные имена методов (стратегии, суффиксы) не съедаются
+        # Right margin and legend font so that long method names (strategies, suffixes) are not cut off
         margin=dict(l=70, r=260, t=60, b=60),
-        # Клики по легенде не скрывают кривые: иначе столбцы AUC (multiselect) перестают
-        # соответствовать тому, что видно на линейном графике (Streamlit не видит клики легенды).
+        # Legend clicks do not hide curves: otherwise the AUC bars (multiselect) stop
+        # matching what is shown on the line plot (Streamlit does not see legend clicks).
         legend=dict(
             traceorder="normal",
             itemsizing="constant",
@@ -1032,7 +1032,7 @@ def plot_removal_impact(
 
 
 def _experiment_removal_suffix(e: Dict[str, Any]) -> str:
-    """Фрагмент подписи: REMOVAL_ADAPTIVE и removal по классам, только если включены."""
+    """Caption fragment: REMOVAL_ADAPTIVE and per-class removal, only if enabled."""
     parts: List[str] = []
     if bool(e.get("removal_adaptive_model")):
         parts.append("REMOVAL_ADAPTIVE")
@@ -1046,7 +1046,7 @@ def _experiment_removal_suffix(e: Dict[str, Any]) -> str:
 
 
 def _experiment_list_label(e: Dict[str, Any]) -> str:
-    """Подпись эксперимента в селекте: модель, sample %, датасет, дата."""
+    """Experiment caption in the select box: model, sample %, dataset, date."""
     eid = (e.get("experiment_id") or "")[:8]
     model = e.get("model") or e.get("model_type") or "?"
     ds = e.get("dataset") or "?"
@@ -1070,20 +1070,20 @@ def _stable_color_picker_key(experiment_id: str, method: str) -> str:
 
 
 def _series_checkbox_key(experiment_id: str, method: str) -> str:
-    """Стабильный key для st.checkbox по эксперименту и полному имени серии."""
+    """Stable st.checkbox key per experiment and full series name."""
     h = hashlib.md5(f"{experiment_id}::{method}".encode()).hexdigest()[:18]
     return f"srchk_{experiment_id[:12]}_{h}"
 
 
 def _methods_selection_signature(methods: List[str]) -> str:
-    """Короткий идентификатор выбора серий для key у plotly_chart (перерисовка при смене выбора)."""
+    """Short id of the series selection for the plotly_chart key (redraw when the selection changes)."""
     return hashlib.md5(repr(methods).encode("utf-8")).hexdigest()[:20]
 
 
-# Бэкап полей формы: при смене страницы Streamlit сбрасывает session_state виджетов.
+# Backup of the form fields: Streamlit resets widget session_state on page change.
 INF_FORM_BACKUP_KEY = "inf_experiment_form_backup"
 INF_FORM_FORCE_RESTORE_KEY = "_inf_force_form_restore"
-# Виджеты вне st.form — их можно безопасно дописывать в бэкап на каждом rerun.
+# Widgets outside st.form can safely be written to the backup on every rerun.
 INF_FORM_OUTSIDE_WIDGET_KEYS = (
     "ws_full_pipeline",
     "ws_removal_adaptive",
@@ -1159,7 +1159,7 @@ def _seed_inf_form_backup_if_empty(
     default_removal: List[str],
     selected_row: Dict[str, Any],
 ) -> None:
-    """Однократное заполнение бэкапа дефолтами из settings (если бэкап ещё пустой)."""
+    """Fill the backup once with defaults from settings (if the backup is still empty)."""
     from config.settings import (
         PYDVL_CONFIG,
         MODEL_RUN_CONFIG,
@@ -1262,7 +1262,7 @@ def _seed_inf_form_backup_if_empty(
 
 
 def _mark_inf_form_restore_needed() -> None:
-    """После остановки/завершения эксперимента — принудительно подтянуть бэкап в виджеты."""
+    """After the experiment stops/finishes, force the backup into the widgets."""
     st.session_state[INF_FORM_FORCE_RESTORE_KEY] = True
 
 
@@ -1272,7 +1272,7 @@ def _restore_inf_form_widgets_from_backup(
     *,
     force: bool = False,
 ) -> None:
-    """Восстановить ключи виджетов из бэкапа (после размонтирования st.form)."""
+    """Restore widget keys from the backup (after st.form is unmounted)."""
     if INF_FORM_BACKUP_KEY not in st.session_state:
         return
     b = st.session_state[INF_FORM_BACKUP_KEY]
@@ -1282,10 +1282,10 @@ def _restore_inf_form_widgets_from_backup(
 
 
 def _apply_inf_form_backup_overrides(overrides: Dict[str, Any]) -> None:
-    """Записать значения только в бэкап (не в session_state виджетов).
+    """Write values to the backup only (not to widget session_state).
 
-    После submit формы ключи виджетов уже синхронизированы Streamlit'ом;
-    повторная запись в session_state после создания виджетов даёт StreamlitAPIException.
+    After a form submit the widget keys are already synced by Streamlit;
+    writing to session_state again after the widgets are created raises StreamlitAPIException.
   """
     if INF_FORM_BACKUP_KEY not in st.session_state:
         st.session_state[INF_FORM_BACKUP_KEY] = {}
@@ -1295,7 +1295,7 @@ def _apply_inf_form_backup_overrides(overrides: Dict[str, Any]) -> None:
 
 
 def _persist_inf_form_outside_widgets() -> None:
-    """Сохранить только виджеты вне st.form (их state обновляется без submit)."""
+    """Save only the widgets outside st.form (their state updates without submit)."""
     if INF_FORM_BACKUP_KEY not in st.session_state:
         st.session_state[INF_FORM_BACKUP_KEY] = {}
     b = st.session_state[INF_FORM_BACKUP_KEY]
@@ -1307,7 +1307,7 @@ def _persist_inf_form_outside_widgets() -> None:
 def _persist_inf_form_backup(
     all_methods: List[str], removal_strategy_keys: List[str]
 ) -> None:
-    """Сохранить session_state в бэкап (для ключей, уже попавших в state)."""
+    """Save session_state to the backup (for keys already in the state)."""
     if INF_FORM_BACKUP_KEY not in st.session_state:
         st.session_state[INF_FORM_BACKUP_KEY] = {}
     b = st.session_state[INF_FORM_BACKUP_KEY]
@@ -1320,7 +1320,7 @@ def _persist_inf_form_backup(
 def _render_inf_form_backup_summary(
     all_methods: List[str], removal_strategy_keys: List[str]
 ) -> None:
-    """Краткий обзор параметров из бэкапа (без st.form — иначе ломается «Остановить» при autorefresh)."""
+    """Short overview of the parameters from the backup (no st.form, otherwise Stop breaks with autorefresh)."""
     b = st.session_state.get(INF_FORM_BACKUP_KEY) or {}
     if not b:
         st.info("Параметры запуска ещё не сохранены.")
@@ -1360,7 +1360,7 @@ def _render_inf_form_backup_summary(
 
 
 def render_top_nav() -> str:
-    """Верхняя навигация; возвращает ключ активной страницы."""
+    """Top navigation; returns the key of the active page."""
     if "main_page" not in st.session_state:
         st.session_state.main_page = "workspace"
     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
@@ -1389,7 +1389,7 @@ def render_top_nav() -> str:
 
 
 def render_experiment_tree() -> None:
-    """Левая панель: родительские эксперименты и дочерние removal."""
+    """Left panel: parent experiments and child removal runs."""
     _delete_btn_icon = "\U0001f5d1"
     st.subheader("Эксперименты")
     if _cached_api_health_ok(API_BASE_URL):
@@ -1555,7 +1555,7 @@ def render_experiment_tree() -> None:
 
 
 def page_workspace_removal() -> None:
-    """Отдельный прогон removal от выбранного родителя."""
+    """Separate removal run from the selected parent."""
     from config.settings import EXPERIMENT_CONFIG, MODEL_RUN_CONFIG
 
     st.subheader("Removal (отдельный прогон)")
@@ -1734,7 +1734,7 @@ def page_workspace() -> None:
 
 
 def page_new_experiment():
-    """Новый эксперимент; поля соответствуют config/settings.py и config_merge."""
+    """New experiment; the fields match config/settings.py and config_merge."""
     from config.settings import (
         PYDVL_CONFIG,
         METRIC_CONFIG,
@@ -1881,8 +1881,8 @@ def page_new_experiment():
     if _pm_key in st.session_state and st.session_state[_pm_key] not in _mopts_cur:
         st.session_state[_pm_key] = _mdef_cur
 
-    # Вне формы: виджеты внутри st.form не обновляют session_state до submit, поэтому
-    # при ws_full_pipeline внутри формы блок «6. Removal» никогда не показывался до отправки.
+    # Outside the form: widgets inside st.form do not update session_state until submit, so
+    # with ws_full_pipeline inside the form the "6. Removal" block was never shown before submitting.
     st.checkbox(
         "Полный пайплайн (influence + removal в одном запуске)",
         value=False,
@@ -2343,7 +2343,7 @@ def page_new_experiment():
             validate_button = st.form_submit_button("Проверить конфигурацию", width="stretch")
 
     def _commit_form_to_backup() -> None:
-        """Сохранить фактические значения формы (из переменных submit, не устаревший session_state)."""
+        """Save the actual form values (from the submit variables, not a stale session_state)."""
         _full = bool(st.session_state.get("ws_full_pipeline", False))
         overrides: Dict[str, Any] = {
             "new_experiment_dataset": selected_dataset,
@@ -2547,7 +2547,7 @@ def page_new_experiment():
 
 
 def page_analysis():
-    """Страница анализа результатов."""
+    """Results analysis page."""
     st.title("Анализ эксперимента")
 
     response = _cached_api_experiments_list(API_BASE_URL)
@@ -2600,9 +2600,9 @@ def page_analysis():
 
     available_methods = results_response.get("influence_methods", [])
 
-    # Раздел: отдельный persist — ключ виджета может пропасть при размонтировании
-    # страницы; при смене эксперимента принудительно подставляем persist в key виджета,
-    # чтобы не сбрасываться на первый раздел.
+    # Section: a separate persist, since the widget key can disappear when the page
+    # is unmounted; on experiment change the persisted value is forced into the widget key
+    # so that it does not reset to the first section.
     _section_opts = (
         _ANALYSIS_TAB_DIST,
         _ANALYSIS_TAB_REMOVAL,
@@ -2844,7 +2844,7 @@ def page_analysis():
                             )
                             color_overrides: Dict[str, str] = {}
                             n = len(methods_to_compare)
-                            # Две колонки — шире блоки, длинные имена методов помещаются лучше, чем при 4 колонках
+                            # Two columns: wider blocks, long method names fit better than with 4 columns
                             ncols = min(2, max(1, n))
                             for row_start in range(0, n, ncols):
                                 cols = st.columns(ncols)
@@ -3118,7 +3118,7 @@ def page_analysis():
 
 
 def page_settings():
-    """Настройки приложения."""
+    """Application settings."""
     st.title("Настройки")
     
     with st.form("settings_form"):
@@ -3161,7 +3161,7 @@ def page_settings():
 
 
 def main():
-    """Точка входа Streamlit."""
+    """Streamlit entry point."""
     if 'selected_methods' not in st.session_state:
         st.session_state.selected_methods = []
     if 'current_experiment_id' not in st.session_state:

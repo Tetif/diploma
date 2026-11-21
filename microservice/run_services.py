@@ -1,21 +1,21 @@
 #!/usr/bin/env python
-"""Запуск API и Streamlit вместе."""
+"""Start the API and Streamlit together."""
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 def main():
-    """Поднимает uvicorn (cwd — корень репозитория) и Streamlit (cwd — папка microservice)."""
+    """Start uvicorn (cwd = repository root) and Streamlit (cwd = microservice folder)."""
     project_root = Path(__file__).resolve().parent.parent
     microservice_pkg = Path(__file__).resolve().parent
 
-    print("Микросервис influence: запуск API и UI")
+    print("Influence microservice: starting the API and UI")
     print("=" * 60)
 
     print("\nFastAPI: http://localhost:8000")
-    # Не перенаправлять stdout/stderr в PIPE: буфер забивается и дочерние процессы зависают,
-    # плюс ошибки (занятый порт, импорты) не видны в консоли.
+    # Do not redirect stdout/stderr to PIPE: the buffer fills up and the child processes hang,
+    # and errors (busy port, imports) are not visible in the console.
     api_process = subprocess.Popen(
         [
             sys.executable,
@@ -50,14 +50,14 @@ def main():
     )
     
     print("\n" + "=" * 60)
-    print("Сервисы запущены. API: http://localhost:8000  UI: http://localhost:8501")
-    print("Документация API: http://localhost:8000/docs")
+    print("Services started. API: http://localhost:8000  UI: http://localhost:8501")
+    print("API docs: http://localhost:8000/docs")
     print("=" * 60)
-    print("\nОстановка обоих: Ctrl+C\n")
+    print("\nStop both: Ctrl+C\n")
     
     def _stop_other(other: subprocess.Popen, name: str) -> None:
         if other.poll() is None:
-            print(f"Останавливаем {name}…")
+            print(f"Stopping {name}...")
             other.terminate()
             try:
                 other.wait(timeout=5)
@@ -68,15 +68,15 @@ def main():
         while True:
             time.sleep(1)
             if api_process.poll() is not None:
-                print("Процесс API завершился.")
+                print("The API process exited.")
                 _stop_other(streamlit_process, "Streamlit")
                 break
             if streamlit_process.poll() is not None:
-                print("Процесс Streamlit завершился.")
+                print("The Streamlit process exited.")
                 _stop_other(api_process, "API")
                 break
     except KeyboardInterrupt:
-        print("\n\nОстановка серверов…")
+        print("\n\nStopping the servers...")
         api_process.terminate()
         streamlit_process.terminate()
         
@@ -87,7 +87,7 @@ def main():
             api_process.kill()
             streamlit_process.kill()
         
-        print("Сервисы остановлены.")
+        print("Services stopped.")
         sys.exit(0)
 
 

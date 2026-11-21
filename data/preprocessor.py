@@ -8,7 +8,7 @@ from experiments.logger import debug_print
 
 
 class DataPreprocessor:
-    """Класс для предобработки данных"""
+    """Data preprocessing"""
 
     def __init__(self, logger=None):
         self.logger = logger
@@ -17,13 +17,13 @@ class DataPreprocessor:
     def comprehensive_preprocessing(self, df: pd.DataFrame, target: str = 'logerror',
                                    fit: bool = True, stats_dict: dict = None,
                                    cols_to_drop: list = None):
-        """Комплексная предобработка данных
+        """Full data preprocessing
 
         Args:
-            df: DataFrame для предобработки
-            target: название целевой переменной
-            fit: если True, рассчитывать статистики на данных; если False, использовать stats_dict
-            stats_dict: словарь со статистиками для применения (используется когда fit=False)
+            df: DataFrame to preprocess
+            target: name of the target variable
+            fit: if True, compute the statistics on the data; if False, use stats_dict
+            stats_dict: dictionary of statistics to apply (used when fit=False)
         """
         if self.logger:
             self.logger.start_timing("preprocessing")
@@ -72,12 +72,12 @@ class DataPreprocessor:
         numeric_cols = df.select_dtypes(include=['number']).columns
 
         if fit:
-            # Рассчитываем статистики на тренировочных данных
+            # Compute the statistics on the training data
             numeric_medians = df[numeric_cols].median()
             df[numeric_cols] = df[numeric_cols].fillna(numeric_medians)
             stats_dict = {'numeric_medians': numeric_medians}
         else:
-            # Используем сохраненные статистики
+            # Use the saved statistics
             if stats_dict is None:
                 raise ValueError("stats_dict must be provided when fit=False")
             df[numeric_cols] = df[numeric_cols].fillna(stats_dict['numeric_medians'])
@@ -85,7 +85,7 @@ class DataPreprocessor:
         categorical_cols = df.select_dtypes(include=['category']).columns
         for col in categorical_cols:
             if fit:
-                # Рассчитываем моду на тренировочных данных
+                # Compute the mode on the training data
                 mode_val = df[col].mode()
                 if not mode_val.empty:
                     df[col] = df[col].fillna(mode_val[0])
@@ -93,7 +93,7 @@ class DataPreprocessor:
                         stats_dict = {}
                     stats_dict[f'categorical_mode_{col}'] = mode_val[0]
             else:
-                # Используем сохраненную моду
+                # Use the saved mode
                 if stats_dict is None or f'categorical_mode_{col}' not in stats_dict:
                     raise ValueError(f"Mode for column {col} not found in stats_dict")
                 df[col] = df[col].fillna(stats_dict[f'categorical_mode_{col}'])
@@ -130,7 +130,7 @@ class DataPreprocessor:
             return X, y
 
     def build_preprocessor(self, X: pd.DataFrame):
-        """Построение пайплайна предобработки"""
+        """Build the preprocessing pipeline"""
         num_cols = X.select_dtypes(include=['number']).columns.tolist()
         cat_cols = X.select_dtypes(include=['category', 'object']).columns.tolist()
 
@@ -152,7 +152,7 @@ class DataPreprocessor:
         return self.preprocessor, num_cols, cat_cols
 
     def fit_preprocessor(self, X: pd.DataFrame):
-        """Обучение предобработчика"""
+        """Fit the preprocessor"""
         if self.preprocessor is None:
             self.build_preprocessor(X)
 
@@ -160,7 +160,7 @@ class DataPreprocessor:
         return self.preprocessor
 
     def transform_data(self, X: pd.DataFrame):
-        """Трансформация данных"""
+        """Transform the data"""
         if self.preprocessor is None:
             raise ValueError("Preprocessor not fitted. Call fit_preprocessor first.")
 

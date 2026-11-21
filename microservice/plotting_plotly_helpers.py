@@ -1,11 +1,11 @@
-"""Чистые хелперы для Plotly-баров без импорта matplotlib (Streamlit не должен тянуть pyplot)."""
+"""Pure helpers for Plotly bars without importing matplotlib (Streamlit must not pull in pyplot)."""
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 
 def _trend_colors_for_methods():
-    """Те же цвета, что и для линий в plot_results_enhanced."""
+    """Same colors as the lines in plot_results_enhanced."""
     return {
         "Baseline": "#000000",
         "LOO": "#2ecc71",
@@ -26,7 +26,7 @@ def _trend_colors_for_methods():
 
 
 def _resolve_method_color(method: str, color_map: dict, default: str = "#7f7f7f") -> str:
-    """Цвет по имени метода; суффиксы стратегий (_lowest, …) → цвет базового метода."""
+    """Color by method name; strategy suffixes (_lowest, ...) -> color of the base method."""
     if method in color_map:
         return color_map[method]
     suffixes = (
@@ -46,7 +46,7 @@ def _resolve_method_color(method: str, color_map: dict, default: str = "#7f7f7f"
 
 
 def _pct_vs_best(values, higher_is_better: bool):
-    """Отклонение каждого значения от лучшего в группе, в %."""
+    """Deviation of each value from the best in the group, in %."""
     vals = [float(x) for x in values]
     n = len(vals)
     if n == 0:
@@ -68,7 +68,7 @@ def _pct_vs_best(values, higher_is_better: bool):
 
 
 def _should_show_pct_vs_best(d: Optional[float]) -> bool:
-    """У лучшего столбца отклонение 0% — вторую строку с процентом не показываем."""
+    """The best bar has a 0% deviation, so the second line with the percentage is not shown."""
     if d is None:
         return False
     return abs(float(d)) > 1e-3
@@ -100,9 +100,9 @@ def mean_pct_abs_diff_from_pointwise_best(
     higher_is_better: bool,
 ) -> Tuple[Dict[str, float], int]:
     """
-    На каждом проценте удаления, где у всех выбранных кривых есть значение:
-    опорное значение — лучшее среди них (max если «выше лучше», min если «ниже лучше»).
-    Для каждой кривой: |v−ref|/|ref|·100%, затем среднее по таким точкам.
+    At each removal percentage where all selected curves have a value:
+    the reference is the best among them (max if higher is better, min if lower is better).
+    For each curve: |v-ref|/|ref|*100%, then the mean over those points.
     """
     if not methods:
         return {}, 0
@@ -147,8 +147,8 @@ def mean_pct_abs_diff_from_pointwise_best(
 
 def removal_curve_rank_scores(aucs, metric_name, metric_metadata):
     """
-    Единая шкала для сравнения: больше rank_score = лучше кривая.
-    Для метрик «чем выше тем лучше» rank_score = AUC; для MAE/RMSE — rank_score = -AUC.
+    A common scale for comparison: higher rank_score = better curve.
+    For higher-is-better metrics rank_score = AUC; for MAE/RMSE rank_score = -AUC.
     """
     meta = (metric_metadata or {}).get(metric_name) or {}
     higher = meta.get("higher_is_better", True)

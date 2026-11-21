@@ -12,8 +12,8 @@ CLASSIFICATION_TASKS = ('binary_classification', 'multiclass_classification')
 
 def target_strata_labels(y_train, n_bins: int) -> Optional[np.ndarray]:
     """
-    Квантильные страты целевой переменной (регрессия): ~равные частоты по y, метки 0..k-1.
-    Если разбить нельзя — None (глобальный removal без страт).
+    Quantile strata of the target (regression): ~equal frequencies over y, labels 0..k-1.
+    None if it cannot be split (global removal without strata).
     """
     y_arr = np.asarray(
         y_train.values if hasattr(y_train, "values") else y_train,
@@ -43,7 +43,7 @@ def target_strata_labels(y_train, n_bins: int) -> Optional[np.ndarray]:
 
 def _allocate_proportional_n_per_class(y_arr: np.ndarray, n_to_remove: int) -> Dict[int, int]:
     """
-    Распределяет n_to_remove по классам пропорционально частотам, с верхом (count_c - 1) на класс.
+    Distribute n_to_remove over the classes proportionally to their frequencies, capped at (count_c - 1) per class.
     """
     unique, counts = np.unique(y_arr, return_counts=True)
     n = len(y_arr)
@@ -92,8 +92,8 @@ def build_full_candidate_order_influence(
     all_indices_scope: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
-    asc_sorted — глобальные индексы обучающей выборки, отсортированные по возрастанию score.
-    n_train = len(asc_sorted). Для стратегий few_* all_indices_scope — индексы того же множества (глобальные).
+    asc_sorted - global train indices sorted by ascending score.
+    n_train = len(asc_sorted). For the few_* strategies all_indices_scope holds indices of the same set (global).
     """
     if all_indices_scope is None:
         all_indices_scope = np.arange(n_train)
@@ -236,10 +236,10 @@ def removal_indices_per_class_valuation(
     remove_smallest_first: Optional[bool] = None,
 ) -> np.ndarray:
     """
-    Удаление по долям внутри групп (класс / страта). Порядок внутри группы:
-    - remove_smallest_first is None: как для valuation — сначала наименьшие значения,
-      если scorer_higher_is_better, иначе наибольшие.
-    - remove_smallest_first True / False: явно (для LossLow / LossHigh по per-sample loss).
+    Removal by shares within groups (class / stratum). Order within a group:
+    - remove_smallest_first is None: as for valuation - smallest values first
+      if scorer_higher_is_better, otherwise largest.
+    - remove_smallest_first True / False: explicit (for LossLow / LossHigh on the per-sample loss).
     """
     vals = np.asarray(vals).ravel()
     y_arr = np.asarray(y_train.values if hasattr(y_train, "values") else y_train).ravel()

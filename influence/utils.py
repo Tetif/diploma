@@ -4,8 +4,8 @@ from experiments.logger import debug_print
 
 def _extract_numeric_values_from_result(result):
     """
-    Расширенная диагностика извлечения значений из результатов pyDVL
-    с улучшенной обработкой разных масштабов значений
+    Extended diagnostics for extracting values from pyDVL results,
+    with better handling of different value scales
     """
     debug_print(f"[DEBUG] Extracting values from result type: {type(result)}")
     debug_print(f"[DEBUG] Result class: {result.__class__.__name__}")
@@ -15,8 +15,8 @@ def _extract_numeric_values_from_result(result):
     attrs = [a for a in dir(result) if not a.startswith('_')]
     debug_print(f"[DEBUG] Public attributes: {attrs[:15]}")
 
-    # [AUDIT-FIX B3] Надёжный путь для pyDVL >= 0.10: ValuationResult с массивами
-    # .indices/.values — значения раскладываются строго по индексам обучающей выборки.
+    # [AUDIT-FIX B3] Reliable path for pyDVL >= 0.10: a ValuationResult with the arrays
+    # .indices/.values - values are placed strictly by train-set index.
     try:
         vr = result.values() if callable(getattr(result, 'values', None)) else result
         idx = getattr(vr, 'indices', None)
@@ -65,7 +65,7 @@ def _extract_numeric_values_from_result(result):
         if v is None:
             if i < 5:
                 debug_print(f"[DEBUG] Item {i}: value is None, appending NaN")
-            numeric.append(np.nan)  # [AUDIT-FIX B3] было 0.0
+            numeric.append(np.nan)  # [AUDIT-FIX B3] was 0.0
             continue
 
         if i < 15:  # Debug first 15 items for LOO/TMCShapley
@@ -104,7 +104,7 @@ def _extract_numeric_values_from_result(result):
         if extracted is None:
             if i < 15:
                 debug_print(f"[DEBUG] Item {i}: ALL EXTRACTORS FAILED, using NaN")
-            numeric.append(np.nan)  # [AUDIT-FIX B3] было 0.0 (молчаливая подмена)
+            numeric.append(np.nan)  # [AUDIT-FIX B3] was 0.0 (silent substitution)
         else:
             numeric.append(extracted)
 
@@ -119,7 +119,7 @@ def _extract_numeric_values_from_result(result):
         if result_array.size > 0:
             debug_print(f"[DEBUG] Min: {np.min(result_array):.10g}, Max: {np.max(result_array):.10g}, Mean: {np.mean(result_array):.10g}")
         
-        # [AUDIT-FIX B4] Скореры больше не возвращают сентинел -1e6, маскирование отключено.
+        # [AUDIT-FIX B4] Scorers no longer return the -1e6 sentinel, masking is disabled.
         sentinel_mask = np.zeros(result_array.shape, dtype=bool)
         if np.any(sentinel_mask):
             debug_print(f"[DEBUG] Detected {int(np.sum(sentinel_mask))} sentinel fail_score values, replacing with NaN")
@@ -170,7 +170,7 @@ def _extract_numeric_values_from_result(result):
 
 
 def get_influence_statistics(scores):
-    """Собирает статистику по influence scores"""
+    """Collect statistics of the influence scores"""
     stats = {}
     for method, values in scores.items():
         if len(values) > 0:

@@ -6,7 +6,7 @@ from config.settings import RANDOM_STATE, EXPERIMENT_CONFIG
 
 
 def set_random_seeds(seed=42):
-    """Установка случайных seed для воспроизводимости"""
+    """Set random seeds for reproducibility"""
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -15,7 +15,7 @@ def set_random_seeds(seed=42):
 
 
 def sample_data(X, y, sample_fraction=None, random_state=None, preserve_order=False):
-    """Выборка данных"""
+    """Sample the data"""
     if sample_fraction is None:
         sample_fraction = EXPERIMENT_CONFIG.get('default_sample_fraction', 0.01)
     if random_state is None:
@@ -56,7 +56,7 @@ def sample_data(X, y, sample_fraction=None, random_state=None, preserve_order=Fa
 
 
 def time_series_split(X, y, test_size):
-    """Последовательное разбиение временного ряда без перемешивания."""
+    """Sequential split of a time series without shuffling."""
     n = len(X)
     if isinstance(test_size, float):
         test_size = int(np.ceil(n * test_size))
@@ -85,7 +85,7 @@ def time_series_split(X, y, test_size):
 
 
 def split_data(X, y, test_size=None, random_state=None, stratify=None, time_series=False):
-    """Разделение данных на train/validation."""
+    """Split the data into train/validation."""
     if test_size is None:
         test_size = EXPERIMENT_CONFIG.get('test_size', 0.2)
     if time_series:
@@ -96,7 +96,7 @@ def split_data(X, y, test_size=None, random_state=None, stratify=None, time_seri
 
 
 def check_gpu_availability():
-    """Проверка доступности GPU с детальной диагностикой"""
+    """Check GPU availability with detailed diagnostics"""
     gpu_available = torch.cuda.is_available()
 
     if gpu_available:
@@ -107,7 +107,7 @@ def check_gpu_availability():
         print(f"   Device name: {device_name}")
         print(f"   CUDA version: {cuda_version}")
         
-        # Проверяем память GPU
+        # Check GPU memory
         if device_count > 0:
             memory_total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             print(f"   GPU memory: {memory_total:.2f} GB")
@@ -122,19 +122,19 @@ def check_gpu_availability():
 
 
 def print_data_info(df, name="Dataset"):
-    """Вывод информации о данных"""
-    print(f"\n{name} — сводка:")
+    """Print information about the data"""
+    print(f"\n{name} summary:")
     print(f"   Shape: {df.shape}")
     print(f"   Columns: {len(df.columns)}")
     print(f"   Memory usage: {df.memory_usage(deep=True).sum() / (1024 ** 2):.2f} MB")
 
-    # Типы данных
+    # Data types
     dtypes = df.dtypes.value_counts()
     print(f"   Data types:")
     for dtype, count in dtypes.items():
         print(f"     {dtype}: {count}")
 
-    # Пропущенные значения
+    # Missing values
     missing = df.isnull().sum().sum()
     if missing > 0:
         missing_pct = missing / (df.shape[0] * df.shape[1]) * 100
@@ -142,7 +142,7 @@ def print_data_info(df, name="Dataset"):
     else:
         print(f"   Missing values: None")
 
-    # Уникальные значения
+    # Unique values
     print(f"   Unique values per column (top 5):")
     for col in df.columns[:5]:
         unique_count = df[col].nunique()

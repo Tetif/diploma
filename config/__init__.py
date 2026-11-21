@@ -15,7 +15,7 @@ from .settings import (
     DISTILLATION_CONFIG
 )
 
-# Датасеты и их конфиги
+# Datasets and their configs
 from .datasets import (
     BaseDatasetConfig,
     PreprocessingConfig,
@@ -36,7 +36,7 @@ __all__ = [
     'CACHE_DIR',
     'USE_CACHE',
     'DISTILLATION_CONFIG',
-    # Датасеты
+    # Datasets
     'BaseDatasetConfig',
     'PreprocessingConfig',
     'DatasetRegistry'

@@ -1,4 +1,4 @@
-"""Конфигурация датасета IMDB Reviews (текст → табличное представление через TF-IDF)"""
+"""IMDB Reviews dataset configuration (text -> tabular representation via TF-IDF)"""
 
 from typing import List, Tuple
 import pandas as pd
@@ -7,7 +7,7 @@ from .base import BaseDatasetConfig, PreprocessingConfig
 
 
 class ImdbConfig(BaseDatasetConfig):
-    """Конфигурация для датасета IMDB (бинарная классификация, признаки — TF-IDF по отзывам)."""
+    """Configuration for the IMDB dataset (binary classification, features are TF-IDF of the reviews)."""
 
     name = 'imdb'
     description = 'IMDB Movie Reviews - Sentiment Classification (Binary)'
@@ -21,8 +21,8 @@ class ImdbConfig(BaseDatasetConfig):
     id_column = None
     columns_to_drop = []
     categorical_columns = []
-    # Имена колонок задаём после векторизации
-    numeric_columns = []  # заполняется в load_data
+    # Column names are set after vectorization
+    numeric_columns = []  # filled in load_data
 
     test_size = 0.2
     val_size = 0.1
@@ -31,10 +31,10 @@ class ImdbConfig(BaseDatasetConfig):
 
     metrics = ['accuracy', 'f1', 'roc_auc', 'precision', 'recall']
 
-    # Широкая разреженная матрица TF-IDF: log_top_bottom_influence непомерно тяжёлый
+    # Wide sparse TF-IDF matrix: log_top_bottom_influence is prohibitively heavy
     show_top_bottom_influence = 0
 
-    # Ограничение выборки и размер словаря TF-IDF
+    # Sample limit and TF-IDF vocabulary size
     max_samples = 25000
     tfidf_max_features = 2000
     use_tfidf_lsa = False
@@ -47,7 +47,7 @@ class ImdbConfig(BaseDatasetConfig):
         self.preprocessing_config.scale_numeric = True
 
     def load_data(self) -> Tuple[pd.DataFrame, pd.Series]:
-        """Загрузить IMDB, векторизовать отзывы через TF-IDF в таблицу признаков."""
+        """Load IMDB and vectorize the reviews via TF-IDF into a feature table."""
         from sklearn.decomposition import TruncatedSVD
         from sklearn.feature_extraction.text import TfidfVectorizer
 

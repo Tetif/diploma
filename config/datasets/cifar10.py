@@ -1,4 +1,4 @@
-"""Конфигурация датасета CIFAR-10 (изображения → табличное представление)"""
+"""CIFAR-10 dataset configuration (images -> tabular representation)"""
 
 from typing import List, Tuple
 import pandas as pd
@@ -13,7 +13,7 @@ except ImportError:
 
 
 class Cifar10Config(BaseDatasetConfig):
-    """Конфигурация для датасета CIFAR-10 (многоклассовая классификация, 3072 признака после flatten)."""
+    """Configuration for the CIFAR-10 dataset (multiclass classification, 3072 features after flatten)."""
 
     name = 'cifar10'
     description = 'CIFAR-10 - Image Classification (10 classes)'
@@ -21,7 +21,7 @@ class Cifar10Config(BaseDatasetConfig):
     task_type = 'multiclass_classification'
 
     data_path = 'datasets/cifar/cifar10/'
-    required_files = []  # папка train с подпапками-классами
+    required_files = []  # train folder with one subfolder per class
     train_dir = 'train'
 
     target_column = 'label'
@@ -37,7 +37,7 @@ class Cifar10Config(BaseDatasetConfig):
 
     metrics = ['accuracy', 'f1_weighted', 'confusion_matrix']
 
-    max_samples = None  # использовать все доступные изображения по классам
+    max_samples = None  # use all available images per class
 
     def __init__(self):
         super().__init__()
@@ -46,7 +46,7 @@ class Cifar10Config(BaseDatasetConfig):
         self.preprocessing_config.encode_categorical = False
 
     def load_data(self) -> Tuple[pd.DataFrame, pd.Series]:
-        """Загрузить CIFAR-10 из папок train/class_name/*.png, сгладить в таблицу 3072 колонок."""
+        """Load CIFAR-10 from train/class_name/*.png folders and flatten into a 3072-column table."""
         if Image is None:
             raise ImportError("PIL (Pillow) is required for CIFAR-10. Install with: pip install Pillow")
 

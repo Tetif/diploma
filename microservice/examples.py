@@ -197,36 +197,36 @@ def example_full_workflow():
     import numpy as np
     import time
     
-    print("Полный пример: запуск и опрос API")
+    print("Full example: start a run and poll the API")
     print("=" * 60)
 
-    print("\n1. Запуск эксперимента...")
+    print("\n1. Starting the experiment...")
     experiment_id = example_start_experiment_api()
     if not experiment_id:
         return
     
-    print("\n2. Опрос статуса...")
+    print("\n2. Polling the status...")
     status = example_poll_status(experiment_id)
     
     if status['status'] != 'completed':
         print("✗ Experiment failed")
         return
     
-    print("\n3. Получение результатов...")
+    print("\n3. Fetching the results...")
     results = example_get_results(experiment_id)
     
-    print("\n4. Веса influence...")
+    print("\n4. Influence weights...")
     weights = example_get_influence_weights(experiment_id, "BetaShapley")
     
-    print("\n5. Сравнение методов...")
+    print("\n5. Comparing the methods...")
     method_stats = example_compare_methods(experiment_id)
     
     print("\n" + "=" * 60)
-    print("Готово.")
+    print("Done.")
 
 
 # UI: streamlit run microservice/app.py
-# API: python microservice/run_api.py или run_services.py
+# API: python microservice/run_api.py or run_services.py
 
 def example_batch_experiments():
     """Example of running multiple experiments in batch"""

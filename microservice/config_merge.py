@@ -66,7 +66,7 @@ def get_settings_snapshot() -> Dict[str, Any]:
 def _deep_merge_influence_params(
     base: Dict[str, Any], overlay: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Слияние influence_params с вложенными dict (lissa_params, cg_params, …)."""
+    """Merge influence_params with nested dicts (lissa_params, cg_params, ...)."""
     out = copy.deepcopy(base)
     for k, v in overlay.items():
         if (
@@ -219,7 +219,7 @@ def build_merged_config(api_config: Dict[str, Any]) -> Dict[str, Any]:
             "influence_methods": [m for m in selected if m in INFLUENCE_METHOD_NAMES],
         }
 
-    # Список стратегий удаления: явный API → legacy removal_strategy → overrides
+    # List of removal strategies: explicit API -> legacy removal_strategy -> overrides
     ovr_mr = (overrides or {}).get("MODEL_RUN_CONFIG") if isinstance(overrides, dict) else None
     api_rs = api_config.get("removal_strategies")
     if isinstance(api_rs, list) and len(api_rs) > 0:

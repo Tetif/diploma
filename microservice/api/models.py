@@ -19,7 +19,7 @@ _REMOVAL_STRATEGIES = frozenset(
 
 _MODEL_FIT_MODES = frozenset({"normal", "underfit", "overfit"})
 
-# Стратегии удаления (MODEL_RUN_CONFIG / runner), не путать с legacy removal_strategy API.
+# Removal strategies (MODEL_RUN_CONFIG / runner), not to be confused with the legacy removal_strategy API.
 _RUNNER_REMOVAL_STRATEGIES = frozenset(
     {
         "lowest",
@@ -75,7 +75,7 @@ class ExperimentConfig(BaseModel):
     debug_mode: bool = False
     overrides: Optional[Dict[str, Any]] = None
 
-    # --- Расширение под config/settings.py (плоские поля → config_merge) ---
+    # --- Extension for config/settings.py (flat fields -> config_merge) ---
     model_fit_mode: Optional[str] = None
     removal_strategies: Optional[List[str]] = None
     metric_config: Optional[Dict[str, str]] = None
@@ -95,9 +95,9 @@ class ExperimentConfig(BaseModel):
         description="full (default) or influence_only (skip removal phase)",
     )
     removal_adaptive_model: bool = False
-    # Классификация: удаление по доле внутри каждого класса (см. MODEL_RUN_CONFIG['removal_per_class'])
+    # Classification: removal by share within each class (see MODEL_RUN_CONFIG['removal_per_class'])
     removal_per_class: Optional[bool] = None
-    # Регрессия: удаление по доле внутри квантильных страт целевой (см. MODEL_RUN_CONFIG)
+    # Regression: removal by share within quantile strata of the target (see MODEL_RUN_CONFIG)
     removal_stratify_target: Optional[bool] = None
     removal_stratify_n_bins: Optional[int] = Field(
         default=None,

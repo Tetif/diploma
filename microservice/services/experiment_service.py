@@ -47,7 +47,7 @@ def _try_write_experiment_summary(
     n_remove_list: Optional[List[int]] = None,
     run_mode: str = "full",
 ) -> None:
-    """Пишет experiment_summary.txt в каталог эксперимента (experiment_logs/дата/время/…)."""
+    """Write experiment_summary.txt into the experiment folder (experiment_logs/date/time/...)."""
     orig = results.get("orig")
     if not isinstance(orig, dict):
         return

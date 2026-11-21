@@ -1,5 +1,5 @@
 {
-  "_doc": "Параметры моделей для датасета Wine Quality (WineQT.csv), регрессия quality.",
+  "_doc": "Model parameters for the Wine Quality dataset (WineQT.csv), regression on quality.",
   "normal": {
     "lightgbm": {
       "objective": "regression",

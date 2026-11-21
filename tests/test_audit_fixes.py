@@ -1,4 +1,4 @@
-"""Тесты к исправлениям из AUDIT.md (см. FIXES.md). Запуск: python -m pytest tests -q"""
+"""Tests for the fixes from AUDIT.md (see FIXES.md). Run: python -m pytest tests -q"""
 import numpy as np
 import pandas as pd
 import pytest
@@ -21,7 +21,7 @@ def _binary_data(n=300, d=5, seed=0):
     return X, y
 
 
-# ---------- B1: clone() воспроизводит модель ----------
+# ---------- B1: clone() reproduces the model ----------
 
 def test_pytorch_clone_roundtrip_keeps_full_config():
     m = PyTorchModelWrapper(5, model_architecture='simple', device='cpu',
@@ -43,7 +43,7 @@ def test_clone_fit_without_epochs_actually_trains():
     m = PyTorchModelWrapper(5, device='cpu', task_type='binary_classification',
                             layers=[16], dropout=0.0, learning_rate=0.01, refit_seed=0)
     c = clone(SafeModelWrapper(m))
-    c.fit(X, y)  # так вызывает pyDVL
+    c.fit(X, y)  # this is how pyDVL calls it
     acc = accuracy_score(y, (c.predict(X) >= 0.5).astype(int))
     assert acc > 0.9, acc
 
@@ -75,7 +75,7 @@ def test_tree_model_clone_keeps_task_type():
     assert c.params['n_estimators'] == 10
 
 
-# ---------- B2: скореры ----------
+# ---------- B2: scorers ----------
 
 class _Fixed:
     def __init__(self, out):
@@ -136,7 +136,7 @@ def test_constant_predictor_score():
     assert constant_predictor_score('f1', [0, 0, 1], [1, 1]) == 0.0
 
 
-# ---------- B3: никаких молчаливых нулей ----------
+# ---------- B3: no silent zeros ----------
 
 class _Boom:
     def fit(self, *a, **k):
@@ -197,7 +197,7 @@ def test_runner_skips_nan_method_and_flags_it(monkeypatch):
     assert 'LossHigh_10pct' in r.results
 
 
-# ---------- M1: усреднение по сидам вместо выбора по holdout ----------
+# ---------- M1: averaging over seeds instead of selection on holdout ----------
 
 def test_aggregate_runs_mean_and_std():
     from experiments.runner import ExperimentRunner
@@ -206,10 +206,10 @@ def test_aggregate_runs_mean_and_std():
     assert h['final_metric'] == pytest.approx(2.0)
     assert h['final_mae'] == pytest.approx(2.0)
     assert h['final_metric_std'] == pytest.approx(np.std([1, 2, 3]))
-    assert model == 'm0'  # не «лучшая по holdout», а первый (фиксированный seed)
+    assert model == 'm0'  # not the "best on holdout", but the first one (fixed seed)
 
 
-# ---------- конфиг ----------
+# ---------- config ----------
 
 def test_design_config():
     assert S.EXPERIMENT_CONFIG['retrain_aggregate'] == 'mean'
@@ -228,7 +228,7 @@ def test_dataset_leaks_removed():
 
 
 def test_parallel_refit_is_deterministic():
-    """[B9] Одновременные fit() в потоках с одинаковым refit_seed дают одинаковые модели."""
+    """[B9] Concurrent fit() calls in threads with the same refit_seed give identical models."""
     import threading
     from models.factory import ModelFactory
     rng = np.random.default_rng(0)
@@ -243,7 +243,7 @@ def test_parallel_refit_is_deterministic():
     expected = ref.predict(X)
     models = []
 
-    def work():  # создание (тратит RNG) и обучение — одновременно в разных потоках
+    def work():  # creation (consumes the RNG) and training run concurrently in different threads
         m = ModelFactory.create_model(**mp)
         m.default_epochs = 30
         m.fit(X, y)
@@ -259,7 +259,7 @@ def test_parallel_refit_is_deterministic():
 
 
 def test_valuation_scorer_uses_validation_data():
-    """[B10] Utility pyDVL считается на X_val/y_val, а не на обучающей выборке."""
+    """[B10] The pyDVL utility is computed on X_val/y_val, not on the training set."""
     from models.factory import ModelFactory
     from influence.methods import InfluenceMethods
     from sklearn.pipeline import Pipeline

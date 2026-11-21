@@ -1,4 +1,4 @@
-"""Конфигурация датасета MNIST (изображения → табличное представление)"""
+"""MNIST dataset configuration (images -> tabular representation)"""
 
 from typing import List, Optional, Tuple
 import gzip
@@ -11,7 +11,7 @@ import pandas as pd
 
 from .base import BaseDatasetConfig, PreprocessingConfig
 
-# Официальные архивы (gzip); те же зеркала, что использует torchvision.datasets.MNIST
+# Official archives (gzip); the same mirrors as torchvision.datasets.MNIST uses
 _MNIST_MIRRORS = (
     "http://yann.lecun.com/exdb/mnist/",
     "https://ossci-datasets.s3.amazonaws.com/mnist/",
@@ -23,7 +23,7 @@ def _project_root() -> Path:
 
 
 def _download_mnist_ubyte(data_dir: Path, basename: str) -> None:
-    """Скачать {basename}.gz с одного из зеркал и сохранить распакованный IDX в data_dir."""
+    """Download {basename}.gz from one of the mirrors and save the unpacked IDX into data_dir."""
     gz_name = f"{basename}.gz"
     dest = data_dir / basename
     last_err: Optional[Exception] = None
@@ -41,7 +41,7 @@ def _download_mnist_ubyte(data_dir: Path, basename: str) -> None:
             last_err = e
             continue
     raise RuntimeError(
-        f"Не удалось скачать MNIST ({gz_name}). Проверьте сеть или положите файлы в {data_dir} вручную."
+        f"Failed to download MNIST ({gz_name}). Check the network or put the files into {data_dir} manually."
     ) from last_err
 
 
@@ -52,7 +52,7 @@ def _ensure_mnist_file(data_dir: Path, basename: str) -> None:
 
 
 def _local_mnist_path(data_dir: Path, basename: str) -> Optional[Path]:
-    """Путь к локальному IDX-файлу: стандартное имя или вариант с точкой вместо «-idx»."""
+    """Path to the local IDX file: the standard name or the variant with a dot instead of «-idx»."""
     p = data_dir / basename
     if p.is_file():
         return p
@@ -65,7 +65,7 @@ def _local_mnist_path(data_dir: Path, basename: str) -> Optional[Path]:
 
 
 def _load_mnist_images(path: str, max_samples: int = None) -> np.ndarray:
-    """Загрузить изображения MNIST из IDX формата."""
+    """Load MNIST images from the IDX format."""
     with open(path, 'rb') as f:
         magic, num, rows, cols = np.frombuffer(f.read(16), dtype='>i4')
         assert magic == 2051
@@ -78,7 +78,7 @@ def _load_mnist_images(path: str, max_samples: int = None) -> np.ndarray:
 
 
 def _load_mnist_labels(path: str, max_samples: int = None) -> np.ndarray:
-    """Загрузить метки MNIST из IDX формата."""
+    """Load MNIST labels from the IDX format."""
     with open(path, 'rb') as f:
         magic, num = np.frombuffer(f.read(8), dtype='>i4')
         assert magic == 2049
@@ -90,7 +90,7 @@ def _load_mnist_labels(path: str, max_samples: int = None) -> np.ndarray:
 
 
 class MnistConfig(BaseDatasetConfig):
-    """Конфигурация для датасета MNIST (многоклассовая классификация, 784 признака после flatten)."""
+    """Configuration for the MNIST dataset (multiclass classification, 784 features after flatten)."""
 
     name = 'mnist'
     description = 'MNIST Handwritten Digits - Digit Classification (Multiclass)'
@@ -113,7 +113,7 @@ class MnistConfig(BaseDatasetConfig):
 
     metrics = ['accuracy', 'f1_weighted', 'confusion_matrix']
 
-    # Ограничение выборки для быстрых экспериментов (None = все данные)
+    # Sample limit for quick experiments (None = all data)
     max_train_samples = 20000
 
     def __init__(self):
@@ -123,19 +123,19 @@ class MnistConfig(BaseDatasetConfig):
         self.preprocessing_config.encode_categorical = False
 
     def _resolved_data_dir(self) -> Path:
-        """Путь к каталогу данных относительно корня репозитория (не зависит от CWD)."""
+        """Path to the data directory relative to the repository root (independent of CWD)."""
         p = Path(self.data_path)
         if p.is_absolute():
             return p
         return _project_root() / p
 
     def load_data(self) -> Tuple[pd.DataFrame, pd.Series]:
-        """Загрузить MNIST, сгладить изображения в таблицу 784 колонок."""
+        """Load MNIST and flatten the images into a 784-column table."""
         data_dir = self._resolved_data_dir()
         train_img, train_lbl = "train-images-idx3-ubyte", "train-labels-idx1-ubyte"
         t10k_img, t10k_lbl = "t10k-images-idx3-ubyte", "t10k-labels-idx1-ubyte"
 
-        # Сначала пытаемся обучающую выборку; при отсутствии файлов — докачиваем с зеркал.
+        # Try the training set first; if the files are missing, download them from the mirrors.
         use_train = (
             _local_mnist_path(data_dir, train_img) is not None
             and _local_mnist_path(data_dir, train_lbl) is not None
@@ -152,7 +152,7 @@ class MnistConfig(BaseDatasetConfig):
             img_path = str(_local_mnist_path(data_dir, train_img))
             lbl_path = str(_local_mnist_path(data_dir, train_lbl))
         else:
-            # Локально только t10k (частый случай) — докачиваем метки или оба файла
+            # Only t10k is available locally (a common case) - download the labels or both files
             if _local_mnist_path(data_dir, t10k_lbl) is None:
                 try:
                     _ensure_mnist_file(data_dir, t10k_lbl)
@@ -165,8 +165,8 @@ class MnistConfig(BaseDatasetConfig):
                 lbl_path = str(p_lbl)
             else:
                 raise FileNotFoundError(
-                    f"MNIST: нет ни полной пары train-*, ни пары t10k-* в {data_dir}. "
-                    f"Ожидаются {train_img}, {train_lbl} (или {t10k_img}, {t10k_lbl})."
+                    f"MNIST: neither a full train-* pair nor a t10k-* pair in {data_dir}. "
+                    f"Expected {train_img}, {train_lbl} (or {t10k_img}, {t10k_lbl})."
                 )
 
         X = _load_mnist_images(img_path, self.max_train_samples)

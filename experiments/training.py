@@ -23,26 +23,26 @@ class TrainingMixin:
     def _select_indices_keep_one_per_class(candidate_order, y_train, n_to_remove,
                                            n_classes_expected=None, logger=None, context=""):
         """
-        Выбирает индексы для удаления так, чтобы для каждой класса оставался
-        хотя бы один пример (для задач классификации).
+        Pick the indices to remove so that each class keeps
+        at least one sample (classification tasks).
 
-        Логика:
-        - candidate_order задаёт приоритет удаления (от "самых худших" к "лучшим")
-        - мы последовательно проходим по candidate_order и добавляем индекс в
-          список удаления только если после этого в классе останется >= 1 объект.
-        - если constraint не позволяет удалить все n_to_remove объектов,
-          удаляем меньше и при наличии logger пишем предупреждение.
+        Logic:
+        - candidate_order sets the removal priority (from "worst" to "best")
+        - we walk through candidate_order and add an index to the
+          removal list only if the class still has >= 1 sample afterwards.
+        - if the constraint does not allow removing all n_to_remove samples,
+          fewer are removed and a warning is logged if a logger is given.
         """
         candidate_order = np.asarray(candidate_order, dtype=int)
         if n_to_remove <= 0 or candidate_order.size == 0:
             return np.array([], dtype=int)
 
-        # Для регрессии или когда не требуется сохранять все классы — возвращаем
-        # первые n_to_remove индексов как есть.
+        # For regression, or when all classes need not be kept, return
+        # the first n_to_remove indices as is.
         if n_classes_expected is None:
             return candidate_order[:n_to_remove]
 
-        # Преобразуем метки в массив и считаем количество примеров каждого класса.
+        # Convert the labels to an array and count the samples of each class.
         y_arr = np.asarray(y_train.values if hasattr(y_train, "values") else y_train).ravel()
         unique_classes, counts = np.unique(y_arr, return_counts=True)
         class_counts = dict(zip(unique_classes, counts))
@@ -54,7 +54,7 @@ class TrainingMixin:
                 break
             cls = y_arr[idx]
             remaining = class_counts[cls] - removed_per_class[cls]
-            # Если удаление этого объекта сделает класс пустым — пропускаем его.
+            # Skip the sample if removing it would leave its class empty.
             if remaining <= 1:
                 continue
             selected.append(idx)
@@ -69,10 +69,10 @@ class TrainingMixin:
         return selected
 
     def train_and_evaluate(self, preprocessor, model_params, X_train, y_train, X_test, y_test, X_val, y_val, n_epochs=50, _run_seed=None):
-        """Обучение и оценка модели"""
-        # Сброс seed перед каждым созданием/обучением модели для детерминированности.
-        # Это устраняет шум от случайной инициализации весов: разные подвыборки дают
-        # разные результаты только из-за данных, а не из-за ГПСЧ.
+        """Train and evaluate a model"""
+        # Reset the seed before each model creation/training for determinism.
+        # This removes the noise of random weight initialization: different subsets give
+        # different results only because of the data, not because of the RNG.
         from utils.helpers import set_random_seeds
         seed = _run_seed if _run_seed is not None else settings_module.RANDOM_STATE
         set_random_seeds(seed)
@@ -80,7 +80,7 @@ class TrainingMixin:
         if self.logger:
             self.logger.start_timing("model_training")
 
-        # Подготовка данных
+        # Data preparation
         if not preprocessor.is_fitted:
             preprocessor.fit(X_train)
         X_train_transformed = preprocessor.transform(X_train)
@@ -91,7 +91,7 @@ class TrainingMixin:
             X_test_transformed = X_test_transformed.toarray()
 
         available_metrics = model_params.get('available_metrics')
-        # Параметры, не относящиеся к самой модели, не передаём в фабрику
+        # Parameters unrelated to the model itself are not passed to the factory
         model_creation_params = {
             k: v
             for k, v in model_params.items()
@@ -107,7 +107,7 @@ class TrainingMixin:
             )
         }
 
-        # Создание модели
+        # Create the model
         model = ModelFactory.create_model(**model_creation_params)
         task_type = model_params.get('task_type', 'regression')
         metric_name = get_selected_metric(task_type, available_metrics)
@@ -116,7 +116,7 @@ class TrainingMixin:
         metric_label_ru = metric_meta['label_ru']
         higher_is_better = metric_meta['higher_is_better']
 
-        # Для регрессии: масштабируем таргет, чтобы MSE/loss был в разумном диапазоне (особенно для Housing и т.п.)
+        # Regression: scale the target so that MSE/loss is in a reasonable range (especially for Housing etc.)
         y_train_vals = np.asarray(y_train.values).reshape(-1, 1)
         y_test_vals = np.asarray(y_test.values).reshape(-1, 1)
         y_val_vals = np.asarray(y_val.values).reshape(-1, 1) if hasattr(y_val, 'values') else np.asarray(y_val).reshape(-1, 1)
@@ -141,7 +141,7 @@ class TrainingMixin:
             'best_val_metric': float('-inf') if higher_is_better else float('inf'),
         }
 
-        # Обучение модели
+        # Train the model
         if model_params.get('model_type') == 'pytorch':
             best_model_weights = None
             patience = 70  # Early stopping patience
@@ -194,7 +194,7 @@ class TrainingMixin:
                     self.logger.log_message(f"Loaded best PyTorch model from epoch {history['best_epoch'] + 1}")
 
         else:
-            # Для tree-based моделей и дистиллированных моделей
+            # For tree-based and distilled models
             tree_fit_kw = {}
             if model_params.get('use_distillation'):
                 if model_params.get('distillation_patience') is not None:
@@ -223,7 +223,7 @@ class TrainingMixin:
             history['best_val_metric'] = test_metric
             history['best_epoch'] = 0
 
-        # Финальная оценка на валидационном множестве
+        # Final evaluation on the validation set
         X_final_transformed = preprocessor.transform(X_val)
         if hasattr(X_final_transformed, 'toarray'):
             X_final_transformed = X_final_transformed.toarray()
@@ -245,10 +245,10 @@ class TrainingMixin:
     @staticmethod
     def _aggregate_runs(run_tuples):
         """
-        [AUDIT-FIX M1] Усреднение по сидам вместо выбора лучшего по holdout.
-        Возвращает (history, model, y_scaler): history первого запуска, но с
-        final_metric = среднее по запускам, final_metric_std и final_metric_runs.
-        Модель/скейлер — первого запуска (фиксированный seed, без отбора по holdout).
+        [AUDIT-FIX M1] Averaging over seeds instead of picking the best on holdout.
+        Returns (history, model, y_scaler): the history of the first run, but with
+        final_metric = mean over the runs, final_metric_std and final_metric_runs.
+        Model/scaler of the first run (fixed seed, no selection on holdout).
         """
         finals = [t[0].get('final_metric', t[0].get('final_mae')) for t in run_tuples]
         finals = [float(v) for v in finals if v is not None]
@@ -274,9 +274,9 @@ class TrainingMixin:
                 n_epochs, n_retrain_runs, higher_is_better,
             )[0]
         """
-        Запускает train_and_evaluate до n_retrain_runs раз с разными seed,
-        возвращает историю с наилучшим final_metric. Реализует идею "kill bad runs".
-        Применяется только для PyTorch (tree-модели детерминированы при fixed random_state).
+        Run train_and_evaluate up to n_retrain_runs times with different seeds and
+        return the history with the best final_metric. Implements the "kill bad runs" idea.
+        Applied only to PyTorch (tree models are deterministic with a fixed random_state).
         """
         best_history = None
         is_pytorch = model_params.get('model_type') == 'pytorch'
@@ -322,8 +322,8 @@ class TrainingMixin:
         higher_is_better,
     ):
         """
-        Версия best-of-N, которая возвращает (history, model, y_scaler) лучшего запуска.
-        Нужна для baseline, чтобы сравнение с removal-кривыми было в одинаковом режиме.
+        Best-of-N version that returns (history, model, y_scaler) of the best run.
+        Needed for the baseline so that it is compared with the removal curves in the same mode.
         """
         is_pytorch = model_params.get('model_type') == 'pytorch'
         if not is_pytorch or n_retrain_runs <= 1:
@@ -341,8 +341,8 @@ class TrainingMixin:
             ]
             return self._aggregate_runs(runs)
 
-        # Legacy (retrain_aggregate='best_holdout'): выбор лучшего запуска по holdout —
-        # оптимистично смещённая оценка, оставлено только для воспроизведения старых графиков.
+        # Legacy (retrain_aggregate='best_holdout'): picks the best run on holdout -
+        # an optimistically biased estimate, kept only to reproduce old plots.
         best_tuple = None
         fallback_tuple = None
         for run_i in range(n_retrain_runs):

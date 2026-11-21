@@ -1,4 +1,4 @@
-"""Подбор model_params для шага removal при включённом removal_adaptive_model."""
+"""Pick model_params for the removal step when removal_adaptive_model is enabled."""
 from __future__ import annotations
 
 import copy
@@ -28,7 +28,7 @@ def _scale_int(val: Any, factor: float, minimum: int = 1) -> Any:
 
 
 def _adjust_nhead_for_d_model(d_model: int, nhead: int) -> int:
-    """MultiheadAttention требует d_model % nhead == 0."""
+    """MultiheadAttention requires d_model % nhead == 0."""
     d_model = int(d_model)
     nhead = max(1, min(int(nhead), d_model))
     while d_model % nhead != 0 and nhead > 1:
@@ -38,9 +38,9 @@ def _adjust_nhead_for_d_model(d_model: int, nhead: int) -> int:
 
 def _scale_pytorch_capacity(out: Dict[str, Any], factor: float, min_layer_width: int) -> None:
     """
-    Снижает ёмкость активной PyTorch-архитектуры при меньшем train.
-    Раньше для regression + model_architecture=simple почти нечего было менять
-    (переключение на simple только при keep_ratio < 0.5), из‑за чего кривые совпадали.
+    Reduce the capacity of the active PyTorch architecture for a smaller train set.
+    Previously for regression + model_architecture=simple there was almost nothing to change
+    (switching to simple only at keep_ratio < 0.5), so the curves coincided.
     """
     arch = out.get("model_architecture", "simple")
     acfg = out.get(arch)
@@ -74,10 +74,10 @@ def model_params_for_removal_subset(
     cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Возвращает model_params для обучения на подвыборке после removal.
+    Return model_params for training on the subsample after removal.
 
-    Если adaptive=False — возвращает тот же объект base_params (без копии).
-    Если adaptive=True — deepcopy и правки ёмкости / pos_weight для подвыборки.
+    If adaptive=False, the same base_params object is returned (no copy).
+    If adaptive=True, a deepcopy with capacity / pos_weight adjustments for the subsample.
     """
     if not adaptive:
         return base_params
@@ -128,7 +128,7 @@ def model_params_for_removal_subset(
                         out["max_depth"] = _scale_int(md, factor, minimum=2)
                 except (TypeError, ValueError):
                     pass
-        # CatBoost: глубина задаётся ключом depth, не max_depth
+        # CatBoost: depth is set by the depth key, not max_depth
         if model_type == "catboost" and "depth" in out:
             try:
                 d = int(out["depth"])

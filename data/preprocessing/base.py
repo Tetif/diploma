@@ -1,6 +1,6 @@
 """
-Базовый класс для предобработки данных.
-Определяет интерфейс для работы с различными типами данных.
+Base class for data preprocessing.
+Defines the interface for working with different data types.
 """
 
 from abc import ABC, abstractmethod
@@ -11,14 +11,14 @@ from sklearn.compose import ColumnTransformer
 
 
 class BasePreprocessor(ABC):
-    """Абстрактный базовый класс для предобработки"""
+    """Abstract base class for preprocessing"""
 
     def __init__(self, logger=None):
         """
-        Инициализация предобработчика
+        Initialize the preprocessor
         
         Args:
-            logger: Логгер для вывода информации
+            logger: Logger for output
         """
         self.logger = logger
         self.preprocessor: Pipeline = None
@@ -27,11 +27,11 @@ class BasePreprocessor(ABC):
     @abstractmethod
     def fit(self, X: pd.DataFrame, y: pd.Series = None) -> 'BasePreprocessor':
         """
-        Подогнать предобработчик на данные
+        Fit the preprocessor on the data
         
         Args:
-            X: Признаки
-            y: Целевая переменная (опционально)
+            X: Features
+            y: Target (optional)
             
         Returns:
             self
@@ -41,38 +41,38 @@ class BasePreprocessor(ABC):
     @abstractmethod
     def transform(self, X: pd.DataFrame) -> np.ndarray:
         """
-        Преобразовать данные
+        Transform the data
         
         Args:
-            X: Признаки
+            X: Features
             
         Returns:
-            Преобразованные признаки
+            Transformed features
         """
         pass
 
     def fit_transform(self, X: pd.DataFrame, y: pd.Series = None) -> np.ndarray:
         """
-        Подогнать и преобразовать данные
+        Fit and transform the data
         
         Args:
-            X: Признаки
-            y: Целевая переменная (опционально)
+            X: Features
+            y: Target (optional)
             
         Returns:
-            Преобразованные признаки
+            Transformed features
         """
         self.fit(X, y)
         return self.transform(X)
 
     def get_preprocessor(self) -> Pipeline:
-        """Получить sklearn Pipeline"""
+        """Get the sklearn Pipeline"""
         if not self.is_fitted:
             raise RuntimeError("Preprocessor is not fitted. Call fit() first.")
         return self.preprocessor
 
     def log_message(self, msg: str):
-        """Логировать сообщение"""
+        """Log a message"""
         if self.logger:
             self.logger.log_message(msg)
         else:

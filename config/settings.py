@@ -2,43 +2,43 @@ import os
 
 import torch
 
-# ===== ВЫБОР ДАТАСЕТА =====
-# Выбираемый датасет: 'zillow', 'adult', 'housing', 'wine', 'covertype', 'electric', 'mnist', 'imdb', 'cifar10'
-CURRENT_DATASET = 'adult'  # zillow почти без сигнала (см. AUDIT.md §4)
+# ===== DATASET SELECTION =====
+# Selected dataset: 'zillow', 'adult', 'housing', 'wine', 'covertype', 'electric', 'mnist', 'imdb', 'cifar10'
+CURRENT_DATASET = 'adult'  # zillow has almost no signal (see AUDIT.md section 4)
 
-# ===== РЕЖИМ ОБУЧЕНИЯ (FIT MODE) =====
-# 'normal'   — оптимальные гиперпараметры (по умолчанию)
-# 'underfit' — намеренно слабая модель (мало ёмкости / мало эпох)
-# 'overfit'  — намеренно переобученная модель (избыточная ёмкость / много эпох)
+# ===== FIT MODE =====
+# 'normal'   - optimal hyperparameters (default)
+# 'underfit' - deliberately weak model (low capacity / few epochs)
+# 'overfit'  - deliberately overfitted model (excess capacity / many epochs)
 MODEL_FIT_MODE = 'normal'
 
-# Переопределение числа эпох для PyTorch/дистилляции в режимах underfit/overfit.
-# В режиме 'normal' используется EXPERIMENT_CONFIG['n_epochs'].
+# Epoch override for PyTorch/distillation in the underfit/overfit modes.
+# The 'normal' mode uses EXPERIMENT_CONFIG['n_epochs'].
 FIT_MODE_EPOCHS = {
     'underfit': 10,
     'overfit': 5000,
 }
 
-# Глобальные флаги для отладки
+# Global debug flags
 DEBUG_MODE = False
 EXPERIMENTS_BASE_DIR = "experiment_logs"
 CACHE_DIR = "data_cache"
 USE_CACHE = True
 
-# Настройки вычислений
-# Переопределяются переменными окружения DIPLOMA_DEVICE / DIPLOMA_N_JOBS (run_study.py, run_overnight.ps1).
+# Compute settings
+# Overridden by the environment variables DIPLOMA_DEVICE / DIPLOMA_N_JOBS (run_study.py, run_overnight.ps1).
 DEVICE = os.environ.get('DIPLOMA_DEVICE') or ('cuda' if torch.cuda.is_available() else 'cpu')
 N_JOBS = int(os.environ.get('DIPLOMA_N_JOBS', 8))
 RANDOM_STATE = 42
 
-# Модель и стратегии удаления для main/экспериментов (единая точка настройки)
+# Model and removal strategies for main/experiments (single place to configure)
 MODEL_RUN_CONFIG = {
     'model_type': 'pytorch',  # lightgbm, xgboost, random_forest, pytorch, catboost
     'model_architecture': 'simple',  # pytorch: simple, improved, ft_transformer, ft_transformer_simple, cnn_small
-    # Стратегии удаления для анализа influence-весов и вспомогательных скриптов.
+    # Removal strategies for the analysis of influence weights and helper scripts.
     'removal_strategies': [
-        # [AUDIT-FIX M3] lowest/highest включены: именно они проверяют гипотезу.
-        # 'extremes' смешивает вредные и полезные точки (эффекты гасятся) — выключено.
+        # [AUDIT-FIX M3] lowest/highest are enabled: they are what tests the hypothesis.
+        # 'extremes' mixes harmful and helpful points (the effects cancel out) - disabled.
         "lowest",
         "highest",
         "random",
@@ -48,17 +48,17 @@ MODEL_RUN_CONFIG = {
         # "few_median_then_random",
         # "few_good_then_random",
     ],
-    # Классификация (binary / multiclass): True — доля удалений и ранжирование
-    # influence (и loss-baseline) отдельно внутри каждого класса; False — глобально по всей train-выборке.
+    # Classification (binary / multiclass): True - the removal share and the ranking of
+    # influence (and the loss baseline) are done separately within each class; False - globally over the whole train set.
     'removal_per_class': False,
-    # Регрессия: True — то же по квантильным стратам целевой переменной (равные частоты по y).
+    # Regression: True - the same over quantile strata of the target (equal frequencies over y).
     'removal_stratify_target': False,
     'removal_stratify_n_bins': 10,
 }
 
-# Методы влияния/valuation: какие считаются при запуске (influence/methods.py)
+# Influence/valuation methods computed in a run (influence/methods.py)
 # valuation_methods: LOO, DataShapley, BetaShapley, Banzhaf, TMCShapley, KNNShapley, DataOOB, LeastCore
-# influence_methods: для PyTorch — Influence, ArnoldiInfluence, CgInfluence, LissaInfluence, NystroemSketchInfluence
+# influence_methods: for PyTorch - Influence, ArnoldiInfluence, CgInfluence, LissaInfluence, NystroemSketchInfluence
 INFLUENCE_METHODS_CONFIG = {
     'valuation_methods': [
         'LOO',
@@ -73,66 +73,66 @@ INFLUENCE_METHODS_CONFIG = {
     'influence_methods': [
         'Influence',
         # 'ArnoldiInfluence',
-        # 'CgInfluence', # не использовать!!! ОЧЕНЬ ДОЛГО РАБОТАЕТ
+        # 'CgInfluence', # do not use!!! VERY SLOW
         'LissaInfluence',
         'NystroemSketchInfluence'
         ],
 }
 
-# Настройки экспериментов
+# Experiment settings
 EXPERIMENT_CONFIG = {
     'test_size': 0.2,
     'val_size': 0.1,
     'n_epochs': 500,
     'sample_size_percentage': 10,
-    # Проценты удаления: (start, stop, num) для np.linspace — единый источник для main и вспомогательных скриптов
+    # Removal percentages: (start, stop, num) for np.linspace - single source for main and helper scripts
     'n_remove_linspace': (1, 90, 10),
-    'n_random_runs': 5,  # [AUDIT-FIX M2] было 1 — нельзя оценить разброс случайного удаления
-    # Число переобучений PyTorch для каждой точки removal: берётся лучший из n запусков.
-    # Устраняет нестабильность из-за плохой инициализации ("kill bad runs").
-    # 1 = без повторов (старое поведение); 3 = хороший баланс качества и скорости.
+    'n_random_runs': 5,  # [AUDIT-FIX M2] was 1 - the spread of random removal could not be estimated
+    # Number of PyTorch retrains for each removal point: the best of n runs is taken.
+    # Removes instability caused by a bad initialization ("kill bad runs").
+    # 1 = no repeats (old behaviour); 3 = a good quality/speed trade-off.
     'n_retrain_runs': 3,
-    # [AUDIT-FIX M1] Как объединять n_retrain_runs запусков:
-    #   'mean'         — среднее по сидам (+ final_metric_std), holdout не используется для выбора;
-    #   'best_holdout' — старое поведение: лучший из n по holdout (оптимистично смещено).
+    # [AUDIT-FIX M1] How to combine n_retrain_runs runs:
+    #   'mean'         - mean over seeds (+ final_metric_std), holdout is not used for selection;
+    #   'best_holdout' - old behaviour: best of n on holdout (optimistically biased).
     'retrain_aggregate': 'mean',
-    # [AUDIT-FIX B1] Сколько full-batch эпох обучается PyTorch-модель на каждом подмножестве
-    # внутри valuation-методов pyDVL (LOO/TMC/...). Раньше фактически было 5.
+    # [AUDIT-FIX B1] How many full-batch epochs the PyTorch model trains on each subset
+    # inside the pyDVL valuation methods (LOO/TMC/...). Previously it was effectively 5.
     'valuation_epochs': 200,
-    # Дополнительные baselines по loss. Оставьте только нужные:
-    # loss_high = удалять сначала объекты с наибольшим loss
-    # loss_low = удалять сначала объекты с наименьшим loss
+    # Additional loss baselines. Keep only the ones you need:
+    # loss_high = remove the samples with the highest loss first
+    # loss_low = remove the samples with the lowest loss first
     'loss_removal_methods': [
         'loss_high',
         # 'loss_low'
     ],
     # CatBoost native object importance (LossFunctionChange).
-    # Если model_type='catboost' — использует обученную модель напрямую (без mismatch).
-    # Для других моделей — обучает proxy CatBoost для вычисления importance.
+    # If model_type='catboost' - uses the trained model directly (no mismatch).
+    # For other models - trains a proxy CatBoost to compute the importance.
     'use_catboost_influence': False,
-    # Показывать N примеров с наибольшими и наименьшими influence-весами в консоли и логах.
-    # False или 0 — отключено.
+    # Show N samples with the highest and lowest influence weights in the console and logs.
+    # False or 0 - disabled.
     'show_top_bottom_influence': 10,
 }
 
-# Эвристика для removal_adaptive_model: снижение ёмкости модели на меньшем train.
+# Heuristic for removal_adaptive_model: reduce model capacity on a smaller train set.
 REMOVAL_ADAPTIVE_CONFIG = {
-    # Доля оставшихся примеров (len(X_sub) / len(X_train_full)): ниже порога PyTorch
-    # переключается на архитектуру simple (если в model_params есть ключ 'simple').
+    # Share of the remaining samples (len(X_sub) / len(X_train_full)): below the threshold PyTorch
+    # switches to the simple architecture (if model_params has a 'simple' key).
     'keep_ratio_threshold': 0.5,
-    # Множитель ёмкости деревьев и ширины слоёв PyTorch MLP: max(min_scale, sqrt(keep_ratio)).
+    # Multiplier of tree capacity and PyTorch MLP layer width: max(min_scale, sqrt(keep_ratio)).
     'min_scale': 0.3,
-    # Нижняя граница ширины скрытого слоя при adaptive (PyTorch simple/improved).
+    # Lower bound of the hidden layer width in adaptive mode (PyTorch simple/improved).
     'pytorch_min_layer_width': 4,
 }
 
-# Стратегии удаления для анализа сохранённых influence-весов (archive/scripts/plot_removal_from_weights.py)
-# Единственный источник — список в MODEL_RUN_CONFIG.
+# Removal strategies for the analysis of saved influence weights (archive/scripts/plot_removal_from_weights.py)
+# The only source is the list in MODEL_RUN_CONFIG.
 REMOVAL_STRATEGIES = MODEL_RUN_CONFIG['removal_strategies']
 
-# Метрики качества по типу задачи.
-# Меняйте значения здесь, чтобы переключать основную метрику эксперимента и графиков.
-# Поддерживаемые варианты:
+# Quality metrics per task type.
+# Change the values here to switch the main metric of the experiment and the plots.
+# Supported options:
 # regression: mae | rmse | r2
 # binary_classification: accuracy | f1 | precision | recall
 # multiclass_classification: accuracy | f1_weighted | f1_macro
@@ -190,7 +190,7 @@ METRIC_METADATA = {
     },
 }
 
-# Настройки pyDVL
+# pyDVL settings
 PYDVL_CONFIG = {
     'n_steps': 10,
     'rtol': 0.01,
@@ -204,8 +204,8 @@ PYDVL_CONFIG = {
 
     'influence_params': {
         'regularization': 1e-06,
-        'batch_size': 16,  # Для DataLoader в influence методах
-        'influence_val_batch_size': 500,  # Батч по валидации при influences_from_factors (чтобы не создавать матрицу n_val×n_train в GPU)
+        'batch_size': 16,  # For the DataLoader in the influence methods
+        'influence_val_batch_size': 500,  # Validation batch for influences_from_factors (so as not to build an n_val x n_train matrix on the GPU)
         'lissa_params': {'scale': 10, 'damping': 0.1},
         'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
         'arnoldi_params': {'rank': 10},
@@ -250,7 +250,7 @@ DATASET_INFLUENCE_PARAMS = {
     'covertype': {
         'regularization': 1e-05,
         'batch_size': 32,
-        'influence_val_batch_size': 256,  # меньше из-за большого n_train/n_val и ограниченной GPU
+        'influence_val_batch_size': 256,  # smaller because of the large n_train/n_val and limited GPU
         'lissa_params': {'scale': 15, 'damping': 0.2},
         'cg_params': {'maxiter': 100, 'tolerance': 1e-2},
         'arnoldi_params': {'rank': 15},
@@ -300,7 +300,7 @@ def get_influence_params(dataset_name):
 
 
 def get_selected_metric(task_type, available_metrics=None):
-    """Вернуть выбранную метрику для типа задачи с валидацией по датасету."""
+    """Return the selected metric for the task type, validated against the dataset."""
     selected_metric = METRIC_CONFIG.get(task_type)
     if selected_metric is None:
         raise ValueError(
@@ -318,7 +318,7 @@ def get_selected_metric(task_type, available_metrics=None):
 
 
 def get_metric_metadata(metric_name):
-    """Метаданные метрики для подписей графиков и логики сравнения."""
+    """Metric metadata for plot labels and comparison logic."""
     if metric_name not in METRIC_METADATA:
         raise ValueError(
             f"Unknown metric: {metric_name}. Available: {list(METRIC_METADATA.keys())}"
@@ -326,23 +326,23 @@ def get_metric_metadata(metric_name):
     return METRIC_METADATA[metric_name].copy()
 
 
-# Гиперпараметры моделей для каждого датасета и fit-режима (normal/underfit/overfit)
-# лежат в config/model_params/<dataset>.json (раньше — 9 файлов config/datasets/*_config.py).
+# Model hyperparameters for each dataset and fit mode (normal/underfit/overfit)
+# live in config/model_params/<dataset>.json (previously 9 files config/datasets/*_config.py).
 from .model_params import load_all_model_params
 
 DATASET_MODEL_CONFIGS = load_all_model_params()
 
-# Функция для получения конфигов модели для конкретного датасета
+# Function that returns the model config for a given dataset
 def get_model_config(dataset_name, model_type):
     """
-    Получить конфигурацию модели для конкретного датасета с учётом MODEL_FIT_MODE.
+    Get the model configuration for a given dataset, taking MODEL_FIT_MODE into account.
 
     Args:
-        dataset_name (str): Имя датасета ('adult', 'housing', 'wine', 'zillow', ...)
-        model_type (str): Тип модели ('lightgbm', 'xgboost', 'catboost', 'random_forest', 'pytorch')
+        dataset_name (str): Dataset name ('adult', 'housing', 'wine', 'zillow', ...)
+        model_type (str): Model type ('lightgbm', 'xgboost', 'catboost', 'random_forest', 'pytorch')
 
     Returns:
-        dict: Конфигурация модели для данного датасета и текущего fit-режима
+        dict: Model configuration for this dataset and the current fit mode
     """
     if dataset_name not in DATASET_MODEL_CONFIGS:
         raise ValueError(
@@ -363,25 +363,25 @@ def get_model_config(dataset_name, model_type):
 
 MODEL_CONFIGS = DATASET_MODEL_CONFIGS
 
-# Настройки дистилляции
+# Distillation settings
 DISTILLATION_CONFIG = {
     'use_distillation': False,
-    'distillation_epochs': 500,  # Количество эпох для дистилляции
-    'temperature': 2.0,  # Температура для дистилляции
-    'student_architecture': 'simple'  # Архитектура студенческой модели: 'simple' или 'improved'
+    'distillation_epochs': 500,  # Number of distillation epochs
+    'temperature': 2.0,  # Distillation temperature
+    'student_architecture': 'simple'  # Student model architecture: 'simple' or 'improved'
 }
 
 
 
 def get_n_remove_list():
-    """Список процентов удаления из EXPERIMENT_CONFIG['n_remove_linspace'] (start, stop, num)."""
+    """List of removal percentages from EXPERIMENT_CONFIG['n_remove_linspace'] (start, stop, num)."""
     import numpy as np
     params = EXPERIMENT_CONFIG.get('n_remove_linspace', (1, 99, 33))
     return np.linspace(params[0], params[1], params[2], dtype=int).tolist()
 
 
 def get_selected_loss_removal_methods():
-    """Вернуть включённые loss-стратегии удаления в формате имён методов эксперимента."""
+    """Return the enabled loss removal strategies as experiment method names."""
     configured_methods = EXPERIMENT_CONFIG.get('loss_removal_methods', ['loss_high', 'loss_low']) or []
     method_mapping = {
         'loss_high': 'LossHigh',
@@ -401,7 +401,7 @@ def get_selected_loss_removal_methods():
             selected_methods.append(mapped_name)
     return selected_methods
 
-# Настройки для synthetic_data экспериментов (код в archive/synthetic_data)
+# Settings for the synthetic_data experiments (code in archive/synthetic_data)
 SYNTHETIC_DATA_CONFIG = {
     'batch_size': 32,
     'learning_rate': 1e-3,

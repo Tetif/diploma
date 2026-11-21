@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Запуск только FastAPI (uvicorn)."""
+"""Start only FastAPI (uvicorn)."""
 import sys
 from pathlib import Path
 
@@ -9,8 +9,8 @@ if __name__ == "__main__":
     import uvicorn
 
     print("FastAPI: http://localhost:8000")
-    print("Документация: http://localhost:8000/docs")
-    print("Остановка: Ctrl+C\n")
+    print("Docs: http://localhost:8000/docs")
+    print("Stop: Ctrl+C\n")
     uvicorn.run(
         "microservice.api:app",
         host="0.0.0.0",

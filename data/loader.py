@@ -6,29 +6,29 @@ import time
 
 
 class DataLoaderFactory:
-    """Фабрика для загрузки данных из различных датасетов"""
+    """Factory that loads data from different datasets"""
 
     @staticmethod
     def load_dataset(dataset_config: BaseDatasetConfig, logger=None) -> Tuple[pd.DataFrame, pd.Series, BaseDatasetConfig]:
         """
-        Загрузить датасет используя его конфигурацию
+        Load a dataset using its configuration
         
         Args:
-            dataset_config: Конфигурация датасета
-            logger: Логгер для вывода информации
+            dataset_config: Dataset configuration
+            logger: Logger for output
             
         Returns:
-            Tuple[pd.DataFrame, pd.Series, BaseDatasetConfig]: (признаки, целевая переменная, конфиг)
+            Tuple[pd.DataFrame, pd.Series, BaseDatasetConfig]: (features, target, config)
         """
         if logger:
             logger.start_timing("data_loading")
             logger.log_message(f"Loading dataset: {dataset_config.name}")
 
         try:
-            # Загружаем данные используя конфиг
+            # Load the data using the config
             X, y = dataset_config.load_data()
 
-            # Валидируем данные
+            # Validate the data
             is_valid = dataset_config.validate_data(X)
             if not is_valid:
                 if logger:
@@ -47,13 +47,13 @@ class DataLoaderFactory:
 
 
 class DataLoader:
-    """Класс для загрузки и объединения данных (для обратной совместимости)"""
+    """Loads and merges data (kept for backward compatibility)"""
 
     def __init__(self, logger=None):
         self.logger = logger
 
     def load_and_merge_data(self, props_path: str, train_path: str, subs_path: str = None):
-        """Загрузка и объединение данных из CSV файлов"""
+        """Load and merge data from CSV files"""
         if self.logger:
             self.logger.start_timing("data_loading")
 
@@ -78,11 +78,11 @@ class DataLoader:
         return df, df_subs
 
     def load_single_dataset(self, filepath: str, **kwargs):
-        """Загрузка одиночного датасета"""
+        """Load a single dataset"""
         return pd.read_csv(filepath, **kwargs)
 
     def validate_data(self, df: pd.DataFrame, target_column: str = None):
-        """Валидация данных"""
+        """Validate the data"""
         if df.empty:
             raise ValueError("DataFrame is empty")
 

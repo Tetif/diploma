@@ -1,4 +1,4 @@
-"""Конфигурация датасета Zillow"""
+"""Zillow dataset configuration"""
 
 from typing import List, Tuple
 import pandas as pd
@@ -7,35 +7,35 @@ from .base import BaseDatasetConfig, PreprocessingConfig
 
 
 class ZillowConfig(BaseDatasetConfig):
-    """Конфигурация для датасета Zillow (регрессия)"""
+    """Configuration for the Zillow dataset (regression)"""
 
     name = 'zillow'
     description = 'Zillow Home Value Prediction - Log Error Regression'
     data_type = 'tabular'
     task_type = 'regression'
 
-    # Пути
+    # Paths
     data_path = 'datasets/'
     required_files = ['properties_2016.csv', 'train_2016_v2.csv', 'sample_submission.csv']
 
-    # Структура данных
+    # Data structure
     target_column = 'logerror'
     id_column = 'parcelid'
     
-    # Специфичные для Zillow колонки для удаления
+    # Zillow-specific columns to drop
     columns_to_drop = [
         'propertylandusetyp', 'fireplacecnt',
         'assessmentyear', 'taxamount', 'taxdelinquencyyear',
         'rawcensustractandblock', 'censustractandblock'
     ]
 
-    # Основные категориальные признаки (колонки, реально присутствующие в данных)
+    # Main categorical features (columns actually present in the data)
     categorical_columns = [
         'propertycountylandusecode', 'propertylandusetypeid',
         'heatingorsystemtypeid', 'airconditioningtypeid'
     ]
 
-    # Числовые признаки: геолокация, характеристики дома, стоимость, дата, feature engineering
+    # Numeric features: geolocation, house properties, value, date, feature engineering
     numeric_columns = [
         'latitude', 'longitude', 'bathroomcnt', 'bedroomcnt',
         'buildingqualitytypeid', 'calculatedfinishedsquarefeet', 'finishedsquarefeet12',
@@ -46,22 +46,22 @@ class ZillowConfig(BaseDatasetConfig):
         'total_finished_sqft', 'age', 'price_per_sqft'
     ]
 
-    # [AUDIT-FIX M7] Клиппинг logerror теперь делается ПОСЛЕ сплита по квантилям только train
-    # (см. main.py: train_target_clip_quantiles); holdout не клиппится и не участвует в расчёте.
+    # [AUDIT-FIX M7] logerror is now clipped AFTER the split, by quantiles of train only
+    # (see main.py: train_target_clip_quantiles); holdout is not clipped and not used for the quantiles.
     train_target_clip_quantiles = (0.005, 0.995)
 
-    # Параметры разделения
+    # Split parameters
     test_size = 0.2
     val_size = 0.1
     random_state = 39
     stratify = False
 
-    # Метрики
+    # Metrics
     metrics = ['mae', 'rmse', 'r2']
 
     def __init__(self):
         super().__init__()
-        # Специфичные параметры предобработки для Zillow
+        # Zillow-specific preprocessing parameters
         self.preprocessing_config.handle_missing_values = True
         self.preprocessing_config.missing_threshold = 0.7
         self.preprocessing_config.encode_categorical = True
@@ -75,18 +75,18 @@ class ZillowConfig(BaseDatasetConfig):
         ]
 
     def load_data(self) -> Tuple[pd.DataFrame, pd.Series]:
-        """Загрузить данные Zillow датасета"""
-        # Загружаем properties и training data
+        """Load the Zillow dataset"""
+        # Load properties and training data
         props_path = self.data_path + 'properties_2016.csv'
         train_path = self.data_path + 'train_2016_v2.csv'
 
         df_props = pd.read_csv(props_path, low_memory=False)
         df_train = pd.read_csv(train_path)
 
-        # Merge по parcelid
+        # Merge on parcelid
         df = df_train.merge(df_props, on='parcelid', how='left')
 
-        # Признаки из даты транзакции (критично для logerror — сезонность)
+        # Features from the transaction date (critical for logerror - seasonality)
         if 'transactiondate' in df.columns:
             df['transactiondate'] = pd.to_datetime(df['transactiondate'], errors='coerce')
             df['tx_month'] = df['transactiondate'].dt.month.fillna(6).astype(int)
@@ -104,33 +104,33 @@ class ZillowConfig(BaseDatasetConfig):
             sqft = df['calculatedfinishedsquarefeet'].replace(0, np.nan)
             df['price_per_sqft'] = df['structuretaxvaluedollarcnt'] / sqft
 
-        # Проверка целевой переменной
+        # Check the target variable
         if self.target_column not in df.columns:
             raise ValueError(f"Target column '{self.target_column}' not found in dataset")
 
         target = df[self.target_column].copy()
 
-        # [AUDIT-FIX M7] Раньше здесь был клиппинг по квантилям ВСЕХ данных до сплита
-        # (утечка информации из holdout). Перенесено в main.py после сплита.
+        # [AUDIT-FIX M7] Previously the target was clipped here by quantiles of ALL data before the split
+        # (leakage from holdout). Moved to main.py after the split.
 
-        # Убрать целевую переменную из признаков
+        # Drop the target variable from the features
         df = df.drop(columns=[self.target_column])
 
         return df, target
 
     def validate_data(self, df: pd.DataFrame) -> bool:
-        """Валидировать данные Zillow датасета"""
-        # Проверить количество строк
+        """Validate the Zillow dataset"""
+        # Check the number of rows
         if len(df) < 1000:
             print(f"Warning: Dataset has only {len(df)} rows")
             return False
 
-        # Проверить наличие ключевой колонки parcelid
+        # Check that the key column parcelid is present
         if 'parcelid' not in df.columns:
             print("Error: parcelid column not found")
             return False
 
-        # Проверить наличие основных числовых колонок
+        # Check that the main numeric columns are present
         critical_cols = ['latitude', 'longitude', 'finishedsquarefeet12']
         for col in critical_cols:
             if col not in df.columns:
@@ -139,12 +139,12 @@ class ZillowConfig(BaseDatasetConfig):
         return True
 
     def get_info(self) -> dict:
-        """Получить информацию о Zillow датасете"""
+        """Get information about the Zillow dataset"""
         info = super().get_info()
         info['special_notes'] = [
-            'Данные содержат два файла: properties и training',
-            'Merge происходит по parcelid',
-            'Много пропущенных значений (~50%)',
-            'Требует специальной обработки дат'
+            'The data consists of two files: properties and training',
+            'Merged on parcelid',
+            'Many missing values (~50%)',
+            'Dates need special handling'
         ]
         return info

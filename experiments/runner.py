@@ -96,7 +96,7 @@ class ExperimentRunner(TrainingMixin, RemovalPhaseMixin):
                         run_mode: str = "full",
                         removal_adaptive_model: bool = False,
                         ):
-        """Запуск экспериментов с удалением данных. run_mode: full | influence_only."""
+        """Data removal experiments. run_mode: full | influence_only."""
         if self.logger:
             self.logger.log_message("Starting experiments...")
 
@@ -142,7 +142,7 @@ class ExperimentRunner(TrainingMixin, RemovalPhaseMixin):
         if progress_callback:
             progress_callback({"kind": "phase", "phase": "influence_setup"})
 
-        # Настройка методов влияния
+        # Set up the influence methods
         influence_methods = InfluenceMethods(self.logger, dataset_config=dataset_config)
         methods, _ = influence_methods.setup_methods(pipeline, X_train, y_train,
                                                      X_test, y_test, preprocessor, methods_to_use=selected_methods,
@@ -153,17 +153,17 @@ class ExperimentRunner(TrainingMixin, RemovalPhaseMixin):
         if progress_callback:
             progress_callback({"kind": "phase", "phase": "influence_compute"})
 
-        # Вычисление influence scores
+        # Compute the influence scores
         scores, scores_raw = influence_methods.compute_scores(methods, X_train, y_train,
                                                               preprocessor, X_test, y_test, pipeline,
                                                               y_scaler=y_scaler)
         failed = dict(getattr(influence_methods, 'failed_methods', {}) or {})
         if failed:
-            # [AUDIT-FIX B3] явная пометка в результатах вместо молчаливых нулей
+            # [AUDIT-FIX B3] explicit mark in the results instead of silent zeros
             self.results['orig']['invalid_methods'] = failed
             if self.logger:
                 for _m, _why in failed.items():
-                    self.logger.log_message(f"[INVALID] {_m}: {_why} — кривая удаления строиться не будет")
+                    self.logger.log_message(f"[INVALID] {_m}: {_why} - no removal curve will be built")
         if self.logger:
             self.logger.log_message("[OK] Influence scores computed.")
 
@@ -178,17 +178,17 @@ class ExperimentRunner(TrainingMixin, RemovalPhaseMixin):
         if top_bottom_n and self.logger and scores_raw:
             self.logger.log_top_bottom_influence(scores_raw, X_train, y_train, n=int(top_bottom_n))
 
-        # Методы удаления по loss (отдельные кривые для сравнения с influence на одном графике)
+        # Loss-based removal methods (separate curves, compared with influence on the same plot)
         selected_loss_methods = get_selected_loss_removal_methods()
         if selected_loss_methods:
             task_type = model_params.get('task_type', 'regression')
             per_sample_loss = compute_per_sample_loss(pipeline, X_train, y_train, task_type)
             if 'LossHigh' in selected_loss_methods:
-                scores['LossHigh'] = per_sample_loss   # удаляем сначала примеры с наибольшим loss
+                scores['LossHigh'] = per_sample_loss   # remove the samples with the highest loss first
                 if scores_raw is not None:
                     scores_raw['LossHigh'] = per_sample_loss
             if 'LossLow' in selected_loss_methods:
-                scores['LossLow'] = per_sample_loss   # удаляем сначала примеры с наименьшим loss
+                scores['LossLow'] = per_sample_loss   # remove the samples with the lowest loss first
                 if scores_raw is not None:
                     scores_raw['LossLow'] = per_sample_loss
             if self.logger:
@@ -219,7 +219,7 @@ class ExperimentRunner(TrainingMixin, RemovalPhaseMixin):
                     import traceback
                     self.logger.log_message(traceback.format_exc())
 
-        # Сохранение весов влияния в experiment dir для переиспользования (archive/scripts/plot_removal_from_weights.py)
+        # Save the influence weights into the experiment dir for reuse (archive/scripts/plot_removal_from_weights.py)
         if self.logger and scores_raw:
             dataset_name = dataset_config.name if dataset_config and getattr(dataset_config, 'name', None) else 'unknown'
             self.logger.save_influence_weights_to_experiment_dir(
@@ -268,7 +268,7 @@ class ExperimentRunner(TrainingMixin, RemovalPhaseMixin):
             n_to_remove = max(1, n_to_remove)
             n_to_remove = min(n_to_remove, len(X_train) - 10)
 
-            # Определяем, нужно ли сохранять хотя бы один пример для каждого класса
+            # Decide whether at least one sample of each class must be kept
             task_type = model_params.get('task_type')
             if task_type in CLASSIFICATION_TASKS:
                 y_arr = np.asarray(y_train.values if hasattr(y_train, "values") else y_train).ravel()

@@ -40,17 +40,17 @@ from influence.utils import get_influence_statistics
 
 def main(dataset_name=None):
     """
-    Основная функция для запуска экспериментов с любым датасетом
+    Main function that runs experiments on any dataset
 
     Args:
-        dataset_name: Имя датасета ('zillow', 'adult', 'housing', 'wine', 'covertype', 'electric', 'mnist', 'imdb', 'cifar10').
-                     Если None, используется CURRENT_DATASET из settings
+        dataset_name: Dataset name ('zillow', 'adult', 'housing', 'wine', 'covertype', 'electric', 'mnist', 'imdb', 'cifar10').
+                     If None, CURRENT_DATASET from settings is used
     """
-    # Выбираем датасет: без --dataset строго из config/settings.py
+    # Pick the dataset: without --dataset strictly from config/settings.py
     if dataset_name is None:
         dataset_name = CURRENT_DATASET
 
-    # Получаем конфиг датасета
+    # Get the dataset config
     try:
         dataset_config = DatasetRegistry.get(dataset_name)
     except KeyError as e:
@@ -75,7 +75,7 @@ def main(dataset_name=None):
     else:
         logger.log_message("GPU not available, using CPU")
 
-    # Конфигурация эксперимента
+    # Experiment configuration
     config = {
         'debug_mode': DEBUG_MODE,
         'fit_mode': MODEL_FIT_MODE,
@@ -93,7 +93,7 @@ def main(dataset_name=None):
             'model_architecture': MODEL_RUN_CONFIG['model_architecture'],
             'input_size': 'auto',
             'device': DEVICE,
-            # Набор стратегий удаления для influence-методов (одна или несколько)
+            # Set of removal strategies for the influence methods (one or several)
             'removal_strategies': MODEL_RUN_CONFIG.get('removal_strategies', REMOVAL_STRATEGIES),
             'removal_per_class': MODEL_RUN_CONFIG.get('removal_per_class', False),
             'removal_stratify_target': MODEL_RUN_CONFIG.get('removal_stratify_target', False),
@@ -109,13 +109,13 @@ def main(dataset_name=None):
 
     logger.log_message("Loading and preparing data...")
 
-    # Загружаем данные используя фабрику
+    # Load the data using the factory
     X, y, cfg = DataLoaderFactory.load_dataset(dataset_config, logger)
 
     logger.log_message(f"Data loaded: {X.shape[0]} rows, {X.shape[1]} columns")
     logger.log_message(f"Target shape: {y.shape}")
 
-    # Кодируем целевую переменную если это классификация
+    # Encode the target for classification
     if cfg.task_type in ['binary_classification', 'multiclass_classification']:
         if y.dtype == 'object' or y.dtype.name == 'object':
             logger.log_message("Encoding target variable for classification...")
@@ -123,7 +123,7 @@ def main(dataset_name=None):
             y = pd.Series(le.fit_transform(y), index=y.index)
             logger.log_message(f"  Classes: {le.classes_}")
 
-    # Отделяем данные для holdout validation
+    # Split off the data for holdout validation
     X_temp, X_holdout_validation, y_temp, y_holdout_validation = split_data(
         X,
         y,
@@ -134,7 +134,7 @@ def main(dataset_name=None):
     )
     logger.log_message(f"Holdout validation set created: {len(X_holdout_validation)} rows (untouched)")
 
-    # Теперь от оставшихся данных берем подвыборку для быстрых тестов (по умолчанию 100%)
+    # Now take a subsample of the remaining data for quick tests (100% by default)
     n = EXPERIMENT_CONFIG['sample_size_percentage'] / 100.0
     logger.log_message(f"Taking {n * 100}%")
     X_sample, y_sample = sample_data(
@@ -146,7 +146,7 @@ def main(dataset_name=None):
 
     logger.log_message(f"Training sample size: {X_sample.shape[0]} rows, {X_sample.shape[1]} features")
 
-    # Разделяем подвыборку на train и test для обучения моделей
+    # Split the subsample into train and test for model training
     logger.log_message("Splitting training sample into train/test sets...")
     X_train, X_test, y_train, y_test = split_data(
         X_sample,
@@ -156,8 +156,8 @@ def main(dataset_name=None):
         time_series=cfg.use_time_split,
     )
 
-    # [AUDIT-FIX M7] Клиппинг выбросов цели по квантилям ТОЛЬКО train (после сплита).
-    # Применяется к train и к test (early stopping / цель influence); holdout не трогаем.
+    # [AUDIT-FIX M7] Clip target outliers by quantiles of train ONLY (after the split).
+    # Applied to train and test (early stopping / influence target); holdout is not touched.
     clip_q = getattr(cfg, 'train_target_clip_quantiles', None)
     if clip_q and cfg.task_type == 'regression':
         lo, hi = y_train.quantile([clip_q[0], clip_q[1]])
@@ -170,21 +170,21 @@ def main(dataset_name=None):
     logger.log_message(f"   Test: {len(X_test)} rows")
     logger.log_message(f"   Holdout Validation: {len(X_holdout_validation)} rows")
 
-    # Создаем предобработчик используя фабрику
+    # Create the preprocessor using the factory
     logger.log_message("Creating preprocessor...")
     preprocessor = PreprocessorFactory.create(dataset_config, logger)
 
-    # Подгоняем предобработчик на train данных
+    # Fit the preprocessor on the train data
     logger.log_message("Fitting preprocessor on training data...")
     preprocessor.fit(X_train)
 
-    # Трансформируем все данные для baseline
+    # Transform all data for the baseline
     logger.log_message("Transforming data...")
     X_train_processed = preprocessor.transform(X_train)
     X_test_processed = preprocessor.transform(X_test)
     X_validation_processed = preprocessor.transform(X_holdout_validation)
 
-    # Конвертируем в numpy если нужно
+    # Convert to numpy if needed
     if hasattr(X_train_processed, 'toarray'):
         X_train_processed = X_train_processed.toarray()
         X_test_processed = X_test_processed.toarray()
@@ -205,12 +205,12 @@ def main(dataset_name=None):
         'preprocessed_features': actual_input_size
     }
 
-    # Получаем оптимальные параметры модели для этого датасета
+    # Get the optimal model parameters for this dataset
     model_type = config['model_params']['model_type']
     logger.log_message(f"\nLoading optimal model configuration for {dataset_name} + {model_type}...")
 
     try:
-        # Получаем параметры модели для конкретного датасета
+        # Get the model parameters for this dataset
         dataset_model_config = get_model_config(dataset_name, model_type)
         logger.log_message(f"Using optimized parameters for {dataset_name} dataset")
         logger.log_message(f"Model config: {dataset_model_config}")
@@ -226,7 +226,7 @@ def main(dataset_name=None):
     model_params['task_type'] = cfg.task_type
     model_params['available_metrics'] = list(getattr(cfg, 'metrics', []))
 
-    # Добавляем оптимальные параметры в model_params (но не перезаписываем уже установленные)
+    # Add the optimal parameters to model_params (without overwriting the ones already set)
     for key, value in dataset_model_config.items():
         if key not in model_params or key in [
             'learning_rate', 'num_leaves', 'max_depth', 'iterations', 'n_estimators',
@@ -237,14 +237,14 @@ def main(dataset_name=None):
     if cfg.task_type == 'multiclass_classification':
         model_params['num_class'] = int(len(np.unique(np.asarray(y_train).ravel())))
 
-    # Для бинарной классификации (PyTorch): pos_weight для BCEWithLogitsLoss уменьшает эффект дисбаланса классов
+    # Binary classification (PyTorch): pos_weight for BCEWithLogitsLoss reduces the effect of class imbalance
     if cfg.task_type == 'binary_classification' and model_params.get('model_type') == 'pytorch':
         y_flat = np.asarray(y_train).ravel()
         n_pos = max(int((y_flat == 1).sum()), 1)
         n_neg = int((y_flat == 0).sum())
         model_params['pos_weight'] = n_neg / n_pos
 
-    # n_epochs: из EXPERIMENT_CONFIG для PyTorch/дистилляции; для tree-моделей всегда 1 (игнорируется)
+    # n_epochs: from EXPERIMENT_CONFIG for PyTorch/distillation; always 1 for tree models (ignored)
     if model_params['model_type'] == 'pytorch' or model_params.get('use_distillation', False):
         if MODEL_FIT_MODE != 'normal' and MODEL_FIT_MODE in FIT_MODE_EPOCHS:
             n_epochs = FIT_MODE_EPOCHS[MODEL_FIT_MODE]
@@ -290,11 +290,11 @@ def main(dataset_name=None):
         dataset_config=dataset_config
     )
 
-    # Визуализация
+    # Visualization
     logger.log_message("Plotting results...")
     logger.save_results(results, scores, scores_raw, n_remove_list, random_run_results=random_run_results)
 
-    # CSV с данными для графика removal в папку эксперимента
+    # CSV with the removal plot data into the experiment folder
     removal_csv_path = logger.experiment_dir / "removal_metrics.csv"
     save_removal_metrics_csv(results, n_remove_list, removal_csv_path)
     logger.log_message(f"Removal metrics CSV saved: {removal_csv_path}")
@@ -310,7 +310,7 @@ def main(dataset_name=None):
     # plot_combined_comparison(results, n_remove_list, logger)
     # plt.show()
 
-    # Генерация отчета
+    # Report generation
     model_metrics = {
         'baseline_metric': results['orig']['final_metric'],
         'best_validation_metric': results['orig']['best_val_metric'],
@@ -340,10 +340,10 @@ def main(dataset_name=None):
 
 
 if __name__ == '__main__':
-    # По умолчанию — значение из config/settings.py (без перезагрузки здесь, т.к. парсер создаётся до main)
+    # Default: the value from config/settings.py (not reloaded here, the parser is created before main)
     parser = argparse.ArgumentParser(description='Run experiments with different datasets')
     parser.add_argument('--dataset', type=str, default=None,
                         help=f"Dataset name. If not set, uses CURRENT_DATASET from config/settings.py (now: {CURRENT_DATASET})")
     args = parser.parse_args()
-    # Явно: без --dataset используем только settings (в main при None подставится CURRENT_DATASET)
+    # Explicit: without --dataset only settings are used (main substitutes CURRENT_DATASET for None)
     main(args.dataset)

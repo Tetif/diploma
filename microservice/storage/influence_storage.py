@@ -1,4 +1,4 @@
-"""Файловое хранилище результатов экспериментов и весов influence."""
+"""File storage for experiment results and influence weights."""
 import json
 import pickle
 import numpy as np
@@ -9,7 +9,7 @@ import shutil
 
 
 class InfluenceWeightsStorage:
-    """Сохранение и загрузка артефактов эксперимента."""
+    """Save and load experiment artifacts."""
     
     def __init__(self, base_path: str = "microservice_storage"):
         self.base_path = Path(base_path)
@@ -20,7 +20,7 @@ class InfluenceWeightsStorage:
     def save_experiment(self, experiment_id: str, config: Dict[str, Any], 
                        results: Dict[str, Any], influence_weights: Dict[str, Any],
                        scores_raw: Dict[str, Any], metadata: Dict[str, Any] = None) -> str:
-        """Сохраняет конфиг, результаты, веса и метаданные."""
+        """Save the config, results, weights and metadata."""
         exp_dir = self.experiments_dir / experiment_id
         exp_dir.mkdir(exist_ok=True)
 
@@ -53,7 +53,7 @@ class InfluenceWeightsStorage:
         return str(exp_dir)
     
     def load_experiment(self, experiment_id: str) -> Optional[Dict[str, Any]]:
-        """Загружает сохранённый эксперимент или None."""
+        """Load a saved experiment or None."""
         exp_dir = self.experiments_dir / experiment_id
         if not exp_dir.exists():
             return None

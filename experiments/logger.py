@@ -11,7 +11,7 @@ from config.settings import METRIC_METADATA
 
 
 def _process_rss_bytes():
-    """Текущий RSS процесса (байт). Без psutil — None."""
+    """Current RSS of the process (bytes). None without psutil."""
     try:
         import psutil
         return int(psutil.Process().memory_info().rss)
@@ -31,7 +31,7 @@ def _reset_cuda_peak_memory_stats():
 
 
 def _cuda_peak_allocated_bytes_sum():
-    """Сумма пиков выделенной памяти по всем CUDA-устройствам за интервал после reset."""
+    """Sum of allocated-memory peaks over all CUDA devices since the last reset."""
     try:
         import torch
         if not torch.cuda.is_available():
@@ -46,8 +46,8 @@ def _cuda_peak_allocated_bytes_sum():
 
 def _parse_cuda_oom_tried_allocate_mb(message: str):
     """
-    Из сообщения CUDA OOM (PyTorch) достаёт размер неудачного выделения, в МБ (2**20 байт).
-    Пример: 'Tried to allocate 16.63 GiB. GPU 0 has a total capacity of...'
+    Extract the size of the failed allocation, in MB (2**20 bytes), from a PyTorch CUDA OOM message.
+    Example: 'Tried to allocate 16.63 GiB. GPU 0 has a total capacity of...'
     """
     if not message:
         return None
@@ -60,7 +60,7 @@ def _parse_cuda_oom_tried_allocate_mb(message: str):
         return None
     val = float(m.group(1))
     unit = m.group(2).lower()
-    # Как и для gpu_peak_mb: МБ = байт / (1024**2)
+    # Same as for gpu_peak_mb: MB = bytes / (1024**2)
     if unit in ("gib", "gb"):
         return val * (1024.0**3) / (1024.0**2)
     if unit in ("mib", "mb"):
@@ -71,7 +71,7 @@ def _parse_cuda_oom_tried_allocate_mb(message: str):
 
 
 class ExperimentLogger:
-    """Класс для логирования эксперимента и сохранения результатов"""
+    """Experiment logging and result saving"""
 
     def __init__(self, base_dir="experiments", experiment_name=None):
         self.start_time = time.time()
@@ -81,10 +81,10 @@ class ExperimentLogger:
         self.config_file = self.experiment_dir / "config.json"
         self.timings = {}
 
-        print(f"Каталог эксперимента: {self.experiment_dir}")
+        print(f"Experiment directory: {self.experiment_dir}")
 
     def _create_experiment_dir(self, base_dir, experiment_name):
-        """Создает вложенную структуру папок: дата/время/название"""
+        """Create the nested folder structure: date/time/name"""
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H-%M-%S")
@@ -98,7 +98,7 @@ class ExperimentLogger:
         return experiment_dir
 
     def log_message(self, message):
-        """Записывает сообщение в лог-файл и выводит на экран"""
+        """Write a message to the log file and print it"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] {message}"
 
@@ -108,7 +108,7 @@ class ExperimentLogger:
         print(log_entry)
 
     def start_timing(self, method_name):
-        """Начинает замер времени для метода"""
+        """Start timing a method"""
         _reset_cuda_peak_memory_stats()
         self.timings[method_name] = {
             'start': time.time(),
@@ -118,7 +118,7 @@ class ExperimentLogger:
         }
 
     def end_timing(self, method_name):
-        """Заканчивает замер времени для метода"""
+        """Stop timing a method"""
         if method_name in self.timings:
             self.timings[method_name]['end'] = time.time()
             self.timings[method_name]['duration'] = (
@@ -143,8 +143,8 @@ class ExperimentLogger:
 
     def record_cuda_oom_if_applicable(self, method_name, exc):
         """
-        После end_timing: если было CUDA OOM, из текста исключения читается «Tried to allocate …».
-        Сохраняет gpu_oom_requested_mb и gpu_memory_max_wanted_mb = max(peak, запрос).
+        After end_timing: on a CUDA OOM, «Tried to allocate ...» is read from the exception text.
+        Saves gpu_oom_requested_mb and gpu_memory_max_wanted_mb = max(peak, request).
         """
         if method_name not in self.timings or exc is None:
             return
@@ -167,13 +167,13 @@ class ExperimentLogger:
             pass
 
     def save_plot(self, plt, plot_name):
-        """Сохраняет график в папку эксперимента"""
+        """Save a plot into the experiment folder"""
         plot_path = self.experiment_dir / f"{plot_name}.png"
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         self.log_message(f"Plot saved: {plot_name}.png")
 
     def save_results(self, results, scores, scores_raw, n_remove_list, random_run_results=None):
-        """Сохраняет результаты в pickle файл"""
+        """Save the results into a pickle file"""
         data_to_save = {
             'results': results,
             'scores': scores,
@@ -216,14 +216,14 @@ class ExperimentLogger:
 
     def save_config(self, config):
         """
-        Сохраняет конфигурацию эксперимента в JSON без дублирования.
-        Нормализует структуру конфига, чтобы избежать повторений.
+        Save the experiment configuration to JSON without duplication.
+        Normalizes the config structure to avoid repetitions.
         """
-        # Нормализованный конфиг без дублирования
+        # Normalized config without duplication
         normalized_config = self._normalize_config(config)
 
-        # Снимок всех ключевых настроек из config/settings.py,
-        # чтобы в config.json всегда сохранялась полная конфигурация.
+        # Snapshot of all key settings from config/settings.py,
+        # so that config.json always holds the full configuration.
         normalized_config["settings_snapshot"] = self._get_settings_snapshot()
 
         with open(self.config_file, 'w', encoding='utf-8') as f:
@@ -231,7 +231,7 @@ class ExperimentLogger:
 
         self.log_message(f"Config saved: {self.config_file}")
 
-        # Попытаться создать diff с предыдущим конфигом (если он существует)
+        # Try to build a diff with the previous config (if it exists)
         try:
             prev_config_path = self._find_previous_config_path()
             if prev_config_path and prev_config_path.exists():
@@ -244,14 +244,14 @@ class ExperimentLogger:
                         df.write("\n".join(diff_lines))
                     self.log_message(f"Config diff saved: {diff_path}")
         except Exception as e:
-            # Diff не критичен для работы эксперимента, поэтому ошибки здесь не фатальны
+            # The diff is not critical for the experiment, so errors here are not fatal
             self.log_message(f"Warning: failed to generate config diff: {e}")
 
     def _normalize_config(self, config):
         """
-        Нормализует конфиг, удаляя дублирование и стандартизируя структуру.
+        Normalize the config: remove duplication and standardize the structure.
         
-        Правило: каждый параметр сохраняется ОДИН раз в нужной секции.
+        Rule: each parameter is stored ONCE, in its section.
         """
         normalized = {
             'metadata': {
@@ -273,7 +273,7 @@ class ExperimentLogger:
             'data_processing': {},
         }
 
-        # Обработка model_params - извлекаем только необходимое
+        # model_params: extract only what is needed
         model_params = config.get('model_params', {})
         normalized['model'] = {
             'type': model_params.get('model_type'),
@@ -282,7 +282,7 @@ class ExperimentLogger:
             'device': model_params.get('device'),
         }
 
-        # Параметры дистилляции - только если используется
+        # Distillation parameters - only if used
         if model_params.get('use_distillation'):
             normalized['model']['distillation'] = {
                 'enabled': True,
@@ -291,17 +291,17 @@ class ExperimentLogger:
                 'student_architecture': model_params.get('student_architecture'),
             }
 
-        # Обработка training_params - убираем дублирование
+        # training_params: remove duplication
         training_params = config.get('training_params', {})
         
-        # Берем фактически используемую стратегию из model_params, затем fallback к training_params.
+        # Take the strategy actually used from model_params, then fall back to training_params.
         removal_strategy = model_params.get('removal_strategy') or \
                          training_params.get('removal_strategy') or \
                          training_params.get('removal_strategies', [None])[0] or \
                          'remove_lowest_influence'
         
-        # Определяем n_remove_list - берем один список, не оба.
-        # Приоритет: явные проценты из experiment_params, затем legacy-поля.
+        # Determine n_remove_list - take one list, not both.
+        # Priority: explicit percentages from experiment_params, then legacy fields.
         n_remove_list = (
             training_params.get('n_remove_percentages')
             or config.get('experiment_params', {}).get('n_remove_percentages')
@@ -326,7 +326,7 @@ class ExperimentLogger:
             } if n_remove_list else None
         }
 
-        # Информация о данных
+        # Data information
         data_info = config.get('data_info', {})
         if data_info:
             normalized['data_processing'] = {
@@ -339,7 +339,7 @@ class ExperimentLogger:
                 }
             }
 
-        # Добавляем расширенные параметры методов если они есть
+        # Add extended method parameters if present
         if 'pydvl_config' in config or 'influence_params' in config:
             normalized['methods_config'] = config.get('pydvl_config') or config.get('influence_params')
 
@@ -347,8 +347,8 @@ class ExperimentLogger:
 
     def _get_settings_snapshot(self):
         """
-        Возвращает JSON-сериализуемый снимок всех основных конфигов из config/settings.py.
-        Здесь собираются только примитивы и словари/списки, чтобы json.dump не падал.
+        Return a JSON-serializable snapshot of all main configs from config/settings.py.
+        Only primitives and dicts/lists are collected so that json.dump does not fail.
         """
         snapshot = {
             "CURRENT_DATASET": settings_module.CURRENT_DATASET,
@@ -374,16 +374,16 @@ class ExperimentLogger:
 
     def _find_previous_config_path(self) -> Path | None:
         """
-        Ищет config.json предыдущего эксперимента в пределах той же даты.
-        Ориентируется на структуру experiment_logs/YYYY-MM-DD/HH-MM-SS/.
+        Find config.json of the previous experiment within the same date.
+        Relies on the experiment_logs/YYYY-MM-DD/HH-MM-SS/ structure.
         """
         try:
-            # Ожидаем, что self.experiment_dir = .../YYYY-MM-DD/HH-MM-SS
+            # Expect self.experiment_dir = .../YYYY-MM-DD/HH-MM-SS
             date_dir = self.experiment_dir.parent
             if not date_dir.exists():
                 return None
 
-            # Собираем все поддиректории с конфигами в этой дате
+            # Collect all subdirectories with configs for this date
             candidates = []
             for subdir in date_dir.iterdir():
                 if subdir.is_dir():
@@ -391,7 +391,7 @@ class ExperimentLogger:
                     if cfg_path.exists():
                         candidates.append(cfg_path)
 
-            # Отсортировать по имени директории (времени) и выбрать предыдущий
+            # Sort by directory name (time) and pick the previous one
             candidates_sorted = sorted(
                 candidates,
                 key=lambda p: p.parent.name
@@ -408,8 +408,8 @@ class ExperimentLogger:
 
     def _generate_config_diff(self, old_cfg: dict, new_cfg: dict):
         """
-        Генерирует человекочитаемый diff между двумя конфигами.
-        Формат строк: path.to.key: old_value -> new_value
+        Build a human-readable diff between two configs.
+        Line format: path.to.key: old_value -> new_value
         """
 
         def _walk(old, new, path_prefix=""):
@@ -435,7 +435,7 @@ class ExperimentLogger:
         return _walk(old_cfg, new_cfg)
 
     def _clean_none_values(self, d):
-        """Удаляет пустые значения из словаря рекурсивно"""
+        """Recursively remove empty values from a dict"""
         if isinstance(d, dict):
             return {k: self._clean_none_values(v) for k, v in d.items() if v is not None and v != {}}
         elif isinstance(d, list):
@@ -443,7 +443,7 @@ class ExperimentLogger:
         return d
 
     def _calculate_total_experiment_time(self):
-        """Вычисляет общее время эксперимента как сумму всех этапов"""
+        """Compute the total experiment time as the sum of all stages"""
         total_time = 0.0
         valid_timings = []
 
@@ -457,8 +457,8 @@ class ExperimentLogger:
     @staticmethod
     def _format_run_metadata_block(_config) -> str:
         """
-        Короткий блок для experiment_summary: датасет и sample_size_percentage,
-        если они есть в dict конфигурации (main, API saved_config, скрипты).
+        Short block for experiment_summary: dataset and sample_size_percentage,
+        if they are present in the config dict (main, API saved_config, scripts).
         """
         if not isinstance(_config, dict):
             return ""
@@ -512,11 +512,11 @@ class ExperimentLogger:
         n_remove_list=None,
     ):
         """
-        Краткий итог эксперимента: время, память по этапам, метрики модели,
-        сводная таблица по сырым influence-scores. Полная конфигурация — в config.json.
-        _config — опционально даёт блок RUN METADATA в summary (dataset, sample_size_percentage, model_type).
-        _scores — для совместимости вызовов (в файл не пишутся).
-        removal_results / n_remove_list — опционально: площадь под кривой removal (AUC) по методам.
+        Short experiment summary: time, memory per stage, model metrics,
+        summary table of the raw influence scores. The full configuration is in config.json.
+        _config - optional, adds the RUN METADATA block to the summary (dataset, sample_size_percentage, model_type).
+        _scores - kept for call compatibility (not written to the file).
+        removal_results / n_remove_list - optional: area under the removal curve (AUC) per method.
         """
         summary_file = self.experiment_dir / "experiment_summary.txt"
 
@@ -563,8 +563,8 @@ class ExperimentLogger:
             f.write("STAGES: duration and memory\n")
             f.write("-" * 40 + "\n")
             f.write(
-                "Только этапы с суффиксом _computation. "
-                "%total — доля от суммарного времени этих этапов.\n"
+                "Only the stages with the _computation suffix. "
+                "%total - share of the total time of these stages.\n"
                 "RAM_MB: RSS (max of start/end snapshot). VRAM_MB: PyTorch CUDA peak allocated per stage; "
                 "N/A if no GPU.\n"
                 "max_wanted_MB: max(VRAM_MB, failed alloc from CUDA OOM text if any); on OOM peak is often "
@@ -676,12 +676,12 @@ class ExperimentLogger:
                     f.write("REMOVAL CURVES (AUC-style integral)\n")
                     f.write("-" * 40 + "\n")
                     f.write(
-                        "  ∫ y dx: y — метрика на тесте, x — доля удалённых от train, x∈[0,1] "
-                        "(как на графике removal / removal_metrics.csv).\n"
+                        "  integral y dx: y - test metric, x - share removed from train, x in [0,1] "
+                        "(as on the removal plot / removal_metrics.csv).\n"
                     )
                     f.write(
-                        "  rank_score: для сравнения кривых (больше = лучше); "
-                        "для метрик «чем меньше тем лучше» rank_score = −AUC.\n"
+                        "  rank_score: for comparing curves (higher = better); "
+                        "for lower-is-better metrics rank_score = -AUC.\n"
                     )
                     f.write(f"  metric: {mn}\n\n")
                     name_w = max(len(m) for m in aucs.keys())
@@ -748,11 +748,11 @@ class ExperimentLogger:
 
     def log_top_bottom_influence(self, scores_raw, X_train, y_train, n=10):
         """
-        Логирует N примеров с наибольшими и наименьшими influence-весами.
-        Для каждого метода:
-          - CSV со всеми фичами, таргетом, influence score и группой (top/bottom)
-          - CSV со сравнением распределений (dataset vs top-N vs bottom-N)
-          - Текстовый отчёт в консоль и лог
+        Log N samples with the highest and lowest influence weights.
+        For each method:
+          - CSV with all features, the target, the influence score and the group (top/bottom)
+          - CSV comparing the distributions (dataset vs top-N vs bottom-N)
+          - Text report to the console and the log
         """
         if not n or n <= 0:
             return
@@ -763,7 +763,7 @@ class ExperimentLogger:
         feature_cols = list(X_df.columns)
 
         numeric_cols = X_df.select_dtypes(include=[np.number]).columns.tolist()
-        # Sparse-колонки (например TF-IDF от IMDB) нужно привести к dense перед agg
+        # Sparse columns (e.g. IMDB TF-IDF) must be made dense before agg
         X_numeric = X_df[numeric_cols]
         sparse_cols = [c for c in numeric_cols
                        if hasattr(X_numeric[c], 'dtype') and hasattr(X_numeric[c].dtype, 'subtype')]
@@ -797,7 +797,7 @@ class ExperimentLogger:
             bottom_idx = sorted_indices[:actual_n]
             top_idx = sorted_indices[-actual_n:][::-1]
 
-            # --- CSV с полными данными примеров ---
+            # --- CSV with the full sample data ---
             rows = []
             for rank, idx in enumerate(top_idx, 1):
                 row = {'group': 'top', 'rank': rank, 'train_index': int(idx),
@@ -816,7 +816,7 @@ class ExperimentLogger:
             csv_path = self.experiment_dir / f"top_bottom_{method_name}.csv"
             examples_df.to_csv(csv_path, index=False, float_format='%.6f')
 
-            # --- CSV со сравнением распределений ---
+            # --- CSV comparing the distributions ---
             top_data = X_df.iloc[top_idx] if hasattr(X_df, 'iloc') else X_df[top_idx]
             bottom_data = X_df.iloc[bottom_idx] if hasattr(X_df, 'iloc') else X_df[bottom_idx]
 
@@ -868,12 +868,12 @@ class ExperimentLogger:
             comp_csv_path = self.experiment_dir / f"distribution_comparison_{method_name}.csv"
             comp_df.to_csv(comp_csv_path, index=False, float_format='%.6f')
 
-            # --- Текстовый отчёт ---
+            # --- Text report ---
             lines.append(f"\n{'='*100}")
             lines.append(f"METHOD: {method_name}")
             lines.append(f"{'='*100}")
 
-            lines.append(f"\n  Top-{actual_n} (наибольшие influence-веса):")
+            lines.append(f"\n  Top-{actual_n} (highest influence weights):")
             lines.append(f"  {'Rank':<5} {'Idx':<8} {'Score':<20} {target_col:<14} | features (first 5)")
             lines.append(f"  {'-'*5} {'-'*8} {'-'*20} {'-'*14} {'-'*40}")
             show_features = feature_cols[:5]
@@ -881,14 +881,14 @@ class ExperimentLogger:
                 feat_vals = "  ".join(f"{X_df.iloc[idx][c]:.4f}" if isinstance(X_df.iloc[idx][c], (int, float, np.floating, np.integer)) else str(X_df.iloc[idx][c])[:10] for c in show_features)
                 lines.append(f"  {rank:<5} {idx:<8} {vals[idx]:<20.6f} {y_arr[idx]:<14} | {feat_vals}")
 
-            lines.append(f"\n  Bottom-{actual_n} (наименьшие influence-веса):")
+            lines.append(f"\n  Bottom-{actual_n} (lowest influence weights):")
             lines.append(f"  {'Rank':<5} {'Idx':<8} {'Score':<20} {target_col:<14} | features (first 5)")
             lines.append(f"  {'-'*5} {'-'*8} {'-'*20} {'-'*14} {'-'*40}")
             for rank, idx in enumerate(bottom_idx, 1):
                 feat_vals = "  ".join(f"{X_df.iloc[idx][c]:.4f}" if isinstance(X_df.iloc[idx][c], (int, float, np.floating, np.integer)) else str(X_df.iloc[idx][c])[:10] for c in show_features)
                 lines.append(f"  {rank:<5} {idx:<8} {vals[idx]:<20.6f} {y_arr[idx]:<14} | {feat_vals}")
 
-            lines.append(f"\n  Сравнение распределений (числовые фичи с наибольшим отклонением от среднего):")
+            lines.append(f"\n  Distribution comparison (numeric features with the largest deviation from the mean):")
             lines.append(f"  {'Feature':<25} {'Dataset mean':>14} {'Top mean':>14} {'Diff%':>8} {'Bottom mean':>14} {'Diff%':>8}")
             lines.append(f"  {'-'*25} {'-'*14} {'-'*14} {'-'*8} {'-'*14} {'-'*8}")
 
@@ -901,8 +901,8 @@ class ExperimentLogger:
                     f"{row['bottom_mean_diff_%']:>+7.1f}%"
                 )
 
-            lines.append(f"\n  Полные данные: {csv_path.name}")
-            lines.append(f"  Сравнение распределений: {comp_csv_path.name}")
+            lines.append(f"\n  Full data: {csv_path.name}")
+            lines.append(f"  Distribution comparison: {comp_csv_path.name}")
 
         lines.append("\n" + sep)
         full_text = "\n".join(lines)
@@ -915,7 +915,7 @@ class ExperimentLogger:
         self.log_message(f"Top/bottom influence report saved: {report_path}")
 
     def get_experiment_dir(self):
-        """Возвращает путь к папке эксперимента"""
+        """Return the experiment folder path"""
         return self.experiment_dir
 
 

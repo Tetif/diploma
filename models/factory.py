@@ -8,21 +8,21 @@ from config.settings import DEVICE
 
 
 class ModelFactory:
-    """Фабрика для создания моделей"""
+    """Factory that creates models"""
 
     @staticmethod
     def create_model(model_params=None, **kwargs):
-        """Создает модель на основе параметров"""
-        # Поддержка как словаря model_params, так и отдельных параметров
+        """Create a model from the parameters"""
+        # Accept both a model_params dict and separate parameters
         if model_params is None:
             model_params = kwargs
         elif isinstance(model_params, dict):
-            # Объединяем model_params и kwargs, kwargs имеет приоритет
+            # Merge model_params and kwargs, kwargs take priority
             params = model_params.copy()
             params.update(kwargs)
             model_params = params
         else:
-            # Если передан не словарь, используем kwargs
+            # If not a dict, use kwargs
             model_params = kwargs if kwargs else {'model_type': 'pytorch'}
 
         model_type = model_params.get('model_type', 'pytorch')
@@ -46,7 +46,7 @@ class ModelFactory:
             if use_distillation:
                 base_model = LightGBMModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
-                    raise ValueError("Для дистиллированной модели требуется input_size")
+                    raise ValueError("A distilled model requires input_size")
                 return DistilledModelWrapper(
                     base_model,
                     input_size,
@@ -63,7 +63,7 @@ class ModelFactory:
             if use_distillation:
                 base_model = XGBoostModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
-                    raise ValueError("Для дистиллированной модели требуется input_size")
+                    raise ValueError("A distilled model requires input_size")
                 return DistilledModelWrapper(
                     base_model,
                     input_size,
@@ -80,7 +80,7 @@ class ModelFactory:
             if use_distillation:
                 base_model = RandomForestModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
-                    raise ValueError("Для дистиллированной модели требуется input_size")
+                    raise ValueError("A distilled model requires input_size")
                 return DistilledModelWrapper(
                     base_model,
                     input_size,
@@ -97,7 +97,7 @@ class ModelFactory:
             if use_distillation:
                 base_model = CatBoostModel(params=model_specific_params, **tree_kwargs)
                 if input_size is None:
-                    raise ValueError("Для дистиллированной модели требуется input_size")
+                    raise ValueError("A distilled model requires input_size")
                 return DistilledModelWrapper(
                     base_model,
                     input_size,
@@ -112,11 +112,11 @@ class ModelFactory:
             return CatBoostModel(params=model_specific_params, **tree_kwargs)
         elif model_type == 'pytorch':
             if input_size is None:
-                raise ValueError("Для PyTorch модели требуется input_size")
+                raise ValueError("A PyTorch model requires input_size")
             if model_architecture == 'cnn_small' and input_size not in (3072, 784):
                 raise ValueError(
-                    "Архитектура cnn_small поддерживает только вход размера 3072 (CIFAR-10) "
-                    f"или 784 (MNIST), получено input_size={input_size}"
+                    "The cnn_small architecture only supports an input size of 3072 (CIFAR-10) "
+                    f"or 784 (MNIST), got input_size={input_size}"
                 )
             arch_config = model_params.get(model_architecture)
             if model_architecture == 'cnn_small':
@@ -134,8 +134,8 @@ class ModelFactory:
                     torch_kwargs['num_classes'] = int(nc)
             if task_type == 'binary_classification' and model_params.get('pos_weight') is not None:
                 torch_kwargs['pos_weight'] = model_params['pos_weight']
-            # [AUDIT-FIX B1] Сколько full-batch эпох делает fit(X, y) «с нуля» (так обучают
-            # модель pyDVL-методы на подмножествах) и seed переинициализации — для воспроизводимости.
+            # [AUDIT-FIX B1] How many full-batch epochs fit(X, y) runs "from scratch" (this is how
+            # pyDVL methods train the model on subsets) and the reinitialization seed, for reproducibility.
             from config.settings import EXPERIMENT_CONFIG, RANDOM_STATE
             torch_kwargs.setdefault(
                 'default_epochs',
@@ -152,7 +152,7 @@ class ModelFactory:
                 **torch_kwargs
             )
         else:
-            raise ValueError(f"Неизвестный тип модели: {model_type}")
+            raise ValueError(f"Unknown model type: {model_type}")
 
     @staticmethod
     def _extract_model_params(model_params, model_type):
@@ -163,7 +163,7 @@ class ModelFactory:
             'use_distillation', 'distillation_epochs', 'task_type',
             'removal_strategy', 'sample_size_percentage', 'temperature',
             'student_architecture', 'available_metrics', 'num_class',
-            # передаются в DistilledModelWrapper.fit(), не в конструкторы деревьев
+            # passed to DistilledModelWrapper.fit(), not to the tree constructors
             'distillation_patience', 'distillation_min_delta',
             # [AUDIT-FIX D3] torch-only / experiment keys: CatBoost and sklearn RandomForest reject unknown
             # constructor kwargs (TypeError), LightGBM / XGBoost only warn
@@ -192,7 +192,7 @@ class ModelFactory:
         specific_params = {k: v for k, v in model_params.items() 
                           if k not in generic_keys}
         nc = model_params.get('num_class')
-        # LightGBM / XGBoost multiclass берут num_class из params (см. датасет-конфиги).
+        # LightGBM / XGBoost multiclass take num_class from params (see the dataset configs).
         if nc is not None and model_type in ('lightgbm', 'xgboost'):
             try:
                 specific_params['num_class'] = int(nc)
@@ -202,14 +202,14 @@ class ModelFactory:
 
     @staticmethod
     def get_available_models():
-        """Возвращает список доступных моделей"""
+        """Return the list of available models"""
         return ['lightgbm', 'xgboost', 'random_forest', 'catboost', 'pytorch']
 
     @staticmethod
     def get_model_config(model_type, dataset_name=None):
         """
-        Возвращает конфигурацию для модели.
-        Для конфига по датасету и типу модели используйте config.settings.get_model_config(dataset_name, model_type).
+        Return the configuration for a model.
+        For a config by dataset and model type use config.settings.get_model_config(dataset_name, model_type).
         """
         if dataset_name is not None:
             from config.settings import get_model_config as settings_get_model_config

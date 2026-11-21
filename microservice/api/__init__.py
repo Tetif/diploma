@@ -1,4 +1,4 @@
-"""HTTP API микросервиса (FastAPI)."""
+"""HTTP API of the microservice (FastAPI)."""
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional, Any, Dict
@@ -350,7 +350,7 @@ async def get_influence_weights(experiment_id: str, method: str):
 
 @app.get("/experiments/{experiment_id}/train-targets")
 async def get_train_targets_endpoint(experiment_id: str):
-    """Метки обучающей выборки (тот же порядок, что у весов influence): классы или страты y (регрессия)."""
+    """Training labels (same order as the influence weights): classes or strata of y (regression)."""
     bundle = _load_experiment_for_api(experiment_id)
     if not bundle:
         raise HTTPException(status_code=404, detail="Experiment not found")
@@ -425,7 +425,7 @@ async def list_experiments():
 
 @app.get("/info/metric-denoise-defaults")
 async def metric_denoise_defaults():
-    """Дефолты коррекции кривых removal из `results_format._METRIC_DENOISE`."""
+    """Defaults of the removal curve correction from `results_format._METRIC_DENOISE`."""
     return get_metric_denoise_defaults()
 
 
@@ -478,7 +478,7 @@ async def get_experiment_graph_data(
         denoise_overrides if denoise_overrides else None,
     )
     removal_data = series["removal_data"]
-    # Совместимость: поле mae ожидается старым UI
+    # Compatibility: the old UI expects the mae field
     legacy_removal = {}
     for name, pts in removal_data.items():
         legacy_removal[name] = [

@@ -15,7 +15,7 @@ METHOD_LABEL_ORDER = [
 
 
 def _method_label_sort_key(m):
-    """Порядок методов для легенд / столбчатых диаграмм (совпадает с get_methods_from_results)."""
+    """Method order for legends / bar charts (same as get_methods_from_results)."""
     if m in METHOD_LABEL_ORDER:
         return (0, METHOD_LABEL_ORDER.index(m))
     if m.endswith('_lowest'):
@@ -30,7 +30,7 @@ def _method_label_sort_key(m):
 
 
 def get_methods_from_results(results):
-    """Извлекает список имён методов из ключей results (для графика и CSV)."""
+    """Extract the list of method names from the results keys (for the plot and CSV)."""
     all_keys = set(results.keys())
     methods = []
     for key in all_keys:
@@ -50,7 +50,7 @@ def get_methods_from_results(results):
 
 
 def _trend_colors_for_methods():
-    """Те же цвета, что и для линий в plot_results_enhanced."""
+    """Same colors as the lines in plot_results_enhanced."""
     return {
         'Baseline': '#000000',
         'LOO': '#2ecc71',
@@ -71,7 +71,7 @@ def _trend_colors_for_methods():
 
 
 def _resolve_method_color(method: str, color_map: dict, default: str = '#7f7f7f') -> str:
-    """Цвет по имени метода; суффиксы стратегий (_lowest, …) → цвет базового метода (как в plot_results_enhanced)."""
+    """Color by method name; strategy suffixes (_lowest, ...) -> color of the base method (as in plot_results_enhanced)."""
     if method in color_map:
         return color_map[method]
     suffixes = (
@@ -92,8 +92,8 @@ def _resolve_method_color(method: str, color_map: dict, default: str = '#7f7f7f'
 
 def _pct_vs_left_neighbor(values):
     """
-    Для каждого столбца: None (первый) или изменение относительно предыдущего, в %.
-    (текущий − предыдущий) / |предыдущий| × 100; при |предыдущем|≈0 — None.
+    For each bar: None (the first one) or the change relative to the previous one, in %.
+    (current - previous) / |previous| * 100; None if |previous| is ~0.
     """
     out = [None]
     for i in range(1, len(values)):
@@ -108,9 +108,9 @@ def _pct_vs_left_neighbor(values):
 
 def _pct_vs_best(values, higher_is_better: bool):
     """
-    Отклонение каждого значения от лучшего в группе, в %.
-    Лучший = max при higher_is_better, иначе min.
-    Формула: 100 * (v - best) / |best| — у лучшего столбца 0%.
+    Deviation of each value from the best in the group, in %.
+    Best = max if higher_is_better, otherwise min.
+    Formula: 100 * (v - best) / |best|; the best bar gets 0%.
     """
     vals = [float(x) for x in values]
     n = len(vals)
@@ -133,14 +133,14 @@ def _pct_vs_best(values, higher_is_better: bool):
 
 
 def _should_show_pct_vs_best(d: Optional[float]) -> bool:
-    """У лучшего столбца отклонение 0% — вторую строку с процентом не показываем."""
+    """The best bar has a 0% deviation, so the second line with the percentage is not shown."""
     if d is None:
         return False
     return abs(float(d)) > 1e-3
 
 
 def _removal_strategy_hatch(method: str) -> str:
-    """Штриховка, чтобы отличать варианты одного базового метода на столбчатой диаграмме."""
+    """Hatching to tell apart variants of the same base method on a bar chart."""
     if method.endswith('_lowest'):
         return ''
     if method.endswith('_highest'):
@@ -160,8 +160,8 @@ def _removal_strategy_hatch(method: str) -> str:
 
 def plot_method_comparison_bars(logger, results, n_remove_list, metric_metadata=None):
     """
-    Сохраняет в каталог эксперимента четыре столбчатые диаграммы по методам:
-    max_wanted_MB и RAM_MB (этапы *_computation), время в секундах, AUC кривых removal.
+    Save four bar charts by method into the experiment folder:
+    max_wanted_MB and RAM_MB (*_computation stages), time in seconds, AUC of the removal curves.
     """
     if logger is None:
         return
@@ -211,7 +211,7 @@ def plot_method_comparison_bars(logger, results, n_remove_list, metric_metadata=
         *,
         higher_is_better: bool = False,
     ):
-        """higher_is_better: для ресурсов (память, время) — False (чем меньше тем лучше)."""
+        """higher_is_better: False for resources (memory, time), lower is better."""
         if not methods:
             return
         w = max(10.0, 0.55 * len(methods))
@@ -428,7 +428,7 @@ def plot_method_comparison_bars(logger, results, n_remove_list, metric_metadata=
 
 
 def _get_metric_context(data):
-    """Достать метаданные выбранной метрики из history/results."""
+    """Get the metadata of the selected metric from history/results."""
     metric_source = data.get('orig', data) if isinstance(data, dict) else {}
     metric_name = metric_source.get('metric_name', 'mae')
     metric_short_label = metric_source.get('metric_short_label_ru', 'MAE')
@@ -445,7 +445,7 @@ def _get_metric_context(data):
 
 
 def _extract_metric_value(metrics_dict, metric_key):
-    """Безопасно достать значение метрики из словаря history/results."""
+    """Safely get a metric value from the history/results dict."""
     if not isinstance(metrics_dict, dict):
         return np.nan
     if metric_key in metrics_dict:
@@ -458,7 +458,7 @@ def _extract_metric_value(metrics_dict, metric_key):
 
 
 def save_removal_metrics_csv(results, n_remove_list, csv_path):
-    """Сохраняет данные графика removal в CSV: pct_removed, baseline, method1, method2, ..."""
+    """Save the removal plot data to CSV: pct_removed, baseline, method1, method2, ..."""
     csv_path = Path(csv_path)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     methods = get_methods_from_results(results)
@@ -480,7 +480,7 @@ def save_removal_metrics_csv(results, n_remove_list, csv_path):
 
 
 def _trapezoid_np(y, x):
-    """Трапеции ∫ y dx; numpy 2+: trapezoid, иначе trapz."""
+    """Trapezoid integral of y dx; numpy 2+: trapezoid, otherwise trapz."""
     fn = getattr(np, "trapezoid", None)
     if fn is not None:
         return float(fn(y, x))
@@ -489,9 +489,9 @@ def _trapezoid_np(y, x):
 
 def compute_removal_curve_aucs(results, n_remove_list):
     """
-    Площадь под кривой «метрика vs. доля удалённых»: ∫ y dx, где x ∈ [0,1] — доля удалённых
-    от train (0 = baseline, без удаления). Совпадает с тем, что в removal_metrics.csv / графике.
-    Возвращает dict method_name -> AUC (сырое интегральное значение).
+    Area under the "metric vs. share removed" curve: integral y dx, where x in [0,1] is the share removed
+    from train (0 = baseline, no removal). Matches removal_metrics.csv / the plot.
+    Returns a dict method_name -> AUC (raw integral value).
     """
     if not n_remove_list:
         return {}
@@ -521,8 +521,8 @@ def compute_removal_curve_aucs(results, n_remove_list):
 
 def removal_curve_rank_scores(aucs, metric_name, metric_metadata):
     """
-    Единая шкала для сравнения: больше rank_score = лучше кривая.
-    Для метрик «чем выше тем лучше» rank_score = AUC; для MAE/RMSE — rank_score = -AUC.
+    A common scale for comparison: higher rank_score = better curve.
+    For higher-is-better metrics rank_score = AUC; for MAE/RMSE rank_score = -AUC.
     """
     meta = (metric_metadata or {}).get(metric_name) or {}
     higher = meta.get("higher_is_better", True)
@@ -538,7 +538,7 @@ def removal_curve_rank_scores(aucs, metric_name, metric_metadata):
 
 
 def plot_influence_distribution(scores, plot_name_suffix="", logger=None):
-    """Визуализация распределения influence scores"""
+    """Plot the distribution of influence scores"""
     methods = list(scores.keys())
     n_methods = len(methods)
 
@@ -584,14 +584,14 @@ def plot_influence_distribution(scores, plot_name_suffix="", logger=None):
 
 
 def plot_results_enhanced(results, n_remove_list, logger=None, random_run_results=None):
-    """Улучшенная визуализация результатов экспериментов
+    """Enhanced plot of the experiment results
     
     Args:
-        results: Основные результаты экспериментов
-        n_remove_list: Список процентов удаляемых образцов
-        logger: Логгер для вывода информации
-        random_run_results: Результаты от нескольких случайных запусков для отображения вариативности
-                           Должен быть список результатов от разных запусков с аналогичной структурой
+        results: Main experiment results
+        n_remove_list: List of removal percentages
+        logger: Logger for output
+        random_run_results: Results of several random runs to show the variability.
+                           Must be a list of results of different runs with the same structure
     """
     if logger:
         logger.log_message("Creating enhanced visualization...")
@@ -638,7 +638,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
     methods = get_methods_from_results(results)
 
     def _color_for_method(method, color_map, default='#999999'):
-        """Resolve color for method; суффиксы используют цвет базового метода."""
+        """Resolve color for method; suffixes use the color of the base method."""
         if method in color_map:
             return color_map[method]
         suffixes = (
@@ -658,11 +658,11 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
 
     def _linestyle_for_method(method):
         """
-        lowest  — сплошная,
-        highest — штрих-пунктир,
-        extremes — пунктир,
-        median — точками,
-        few_*_rand — комбинированные стили (отличаются от базовых).
+        lowest - solid,
+        highest - dash-dot,
+        extremes - dashed,
+        median - dotted,
+        few_*_rand - combined styles (different from the base ones).
         """
         if method.endswith('_lowest'):
             return '-'
@@ -681,7 +681,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
         return '-'
 
     def _marker_for_method(method):
-        """Маркер для стратегий: lowest/highest/extremes и few_* отличаются."""
+        """Marker for strategies: lowest/highest/extremes and few_* differ."""
         if method.endswith('_lowest'):
             return 'o'
         if method.endswith('_highest'):
@@ -702,7 +702,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
         debug_print(f"Detected methods for plotting: {methods}")
 
     for method in tqdm(methods, desc="Plotting removal curves", unit="method", leave=False):
-        # Пропускаем random если выводятся несколько запусков random
+        # Skip random if several random runs are plotted
         if method == 'random' and random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
             continue
 
@@ -736,28 +736,28 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
                     label=f'{method}',
                 )
 
-    # Добавляем результаты от нескольких случайных запусков
+    # Add the results of several random runs
     if random_run_results is not None and isinstance(random_run_results, dict) and len(random_run_results) > 0:
         if logger:
             logger.log_message(f"Plotting uncertainty bounds from random runs...")
         else:
             debug_print(f"Plotting uncertainty bounds from random runs...")
         
-        # random_run_results это словарь {pct: [mae_values]}
+        # random_run_results is a dict {pct: [mae_values]}
         x_random = [0] + n_remove_list
         worst_values = []
         best_values = []
         mean_values = []
         
-        # Для каждой точки (0%, 10%, 20% и т.д.)
+        # For each point (0%, 10%, 20% etc.)
         for pct_value in tqdm(x_random, desc="Processing random run percentages", unit="pct", leave=False):
             if pct_value == 0:
-                # Для базовой точки (0%) нет данных в random_run_results
+                # The base point (0%) has no data in random_run_results
                 worst_values.append(np.nan)
                 best_values.append(np.nan)
                 mean_values.append(np.nan)
             else:
-                # Для других процентов берем данные из словаря
+                # For other percentages take the data from the dict
                 if pct_value in random_run_results and len(random_run_results[pct_value]) > 0:
                     metric_at_point = random_run_results[pct_value]
                     worst_values.append(max(metric_at_point))
@@ -768,7 +768,7 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
                     best_values.append(np.nan)
                     mean_values.append(np.nan)
         
-        # Используем индексы с валидными данными
+        # Use the indices with valid data
         valid_indices = [i for i in range(len(mean_values)) if not np.isnan(mean_values[i])]
         if len(valid_indices) > 0:
             x_valid = [x_random[i] for i in valid_indices]
@@ -776,11 +776,11 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
             best_valid = [best_values[i] for i in valid_indices]
             mean_valid = [mean_values[i] for i in valid_indices]
             
-            # Показываем доверительный интервал (худший-лучший диапазон) - полупрозрачная полоса
+            # Show the interval (worst-best range) as a translucent band
             plt.fill_between(x_valid, best_valid, worst_valid, 
                             color='#f39c12', alpha=0.15, label='Диапазон случайных запусков')
             
-            # Линия среднего значения - яркая (без маркеров)
+            # Mean line, bright (no markers)
             plt.plot(x_valid, mean_valid, '-', color='#f39c12', alpha=0.9,
                     linewidth=2.5, label='Среднее по случайным запускам')
 
@@ -808,11 +808,11 @@ def plot_results_enhanced(results, n_remove_list, logger=None, random_run_result
 
 
 def plot_training_history(history, model_name="Model", logger=None):
-    """Визуализация истории обучения"""
+    """Plot the training history"""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     metric_ctx = _get_metric_context(history)
 
-    # График потерь
+    # Loss plot
     if 'train' in history and len(history['train']) > 0:
         ax1.plot(history['train'], label='Ошибка на обучении', color='blue')
     if 'val' in history and len(history['val']) > 0:
@@ -824,7 +824,7 @@ def plot_training_history(history, model_name="Model", logger=None):
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    # График основной метрики
+    # Main metric plot
     final_metric = _extract_metric_value(history, metric_ctx['final_key'])
     if not np.isnan(final_metric):
         ax2.bar([metric_ctx['short_label_ru']], [final_metric], color='green')
@@ -843,7 +843,7 @@ def plot_training_history(history, model_name="Model", logger=None):
 
 
 def plot_combined_comparison(results, n_remove_list, logger=None):
-    """Комбинированный график с двумя метриками на одной оси"""
+    """Combined plot with two metrics on one axis"""
     if logger:
         logger.log_message("Creating combined comparison visualization...")
 
@@ -854,7 +854,7 @@ def plot_combined_comparison(results, n_remove_list, logger=None):
 
     x_points = [0] + n_remove_list
 
-    # Определяем методы
+    # Determine the methods
     methods = []
     for key in results.keys():
         if '_' in key and key != 'orig':
@@ -862,11 +862,11 @@ def plot_combined_comparison(results, n_remove_list, logger=None):
             if method not in methods and not method.startswith('random'):
                 methods.append(method)
 
-    # Для каждого метода строим две линии
+    # Draw two lines for each method
     for idx, method in enumerate(methods):
         color = colors[idx % len(colors)]
 
-        # Данные для финальной метрики на holdout validation
+        # Data for the final metric on holdout validation
         final_metric_values = []
         if 'orig' in results:
             final_metric_values.append(_extract_metric_value(results['orig'], metric_ctx['final_key']))
@@ -877,7 +877,7 @@ def plot_combined_comparison(results, n_remove_list, logger=None):
             else:
                 final_metric_values.append(np.nan)
 
-        # Данные для лучшей метрики во время обучения
+        # Data for the best metric during training
         test_metric_values = []
         if 'orig' in results:
             test_metric_values.append(_extract_metric_value(results['orig'], metric_ctx['best_key']))
@@ -888,13 +888,13 @@ def plot_combined_comparison(results, n_remove_list, logger=None):
             else:
                 test_metric_values.append(np.nan)
 
-        # Отображаем линии
+        # Draw the lines
         plt.plot(x_points, final_metric_values, 'o-', color=color, alpha=0.7,
                  linewidth=2, markersize=6, label=f'{method} (holdout)')
         plt.plot(x_points, test_metric_values, 's--', color=color, alpha=0.5,
                  linewidth=1.5, markersize=4, label=f'{method} (лучшая на test)')
 
-    # Добавляем случайное удаление
+    # Add random removal
     if 'random_10pct' in results:
         final_random = [_extract_metric_value(results['orig'], metric_ctx['final_key'])]
         test_random = [_extract_metric_value(results['orig'], metric_ctx['best_key'])]
@@ -919,10 +919,10 @@ def plot_combined_comparison(results, n_remove_list, logger=None):
     plt.xticks(x_points, ['0%'] + [f'{pct}%' for pct in n_remove_list])
     plt.grid(True, alpha=0.2)
 
-    # Добавляем легенду
+    # Add the legend
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', ncol=2)
 
-    # Добавляем информационный текст
+    # Add the info text
     plt.figtext(0.5, 0.01,
                 'Сплошные линии с кружками: holdout validation\n'
                 'Пунктирные линии с квадратами: лучшая метрика на test во время обучения',
@@ -944,57 +944,57 @@ def plot_influence_lowest_by_regularization(
     regularization_values=None
 ):
     """
-    График MAE на валидации в зависимости от доли удалённых объектов.
-    Сравнивает только метод Influence_lowest при разных параметрах регуляризации.
+    Validation MAE as a function of the share of removed samples.
+    Compares only the Influence_lowest method with different regularization parameters.
     
     Args:
-        results_dict: Словарь {regularization_param: results_dict}
-                     Например: {'1e-05': results1, '1e-04': results2, ...}
-                     ИЛИ список результатов (тогда используется regularization_values)
-        n_remove_list: Список процентов удаляемых образцов [10, 20, 30, ...]
-        logger: Логгер для сохранения графика
-        title_suffix: Дополнительный текст к заголовку
-        regularization_values: Список названий параметров регуляризации для легенды
-                              (используется если results_dict — список)
+        results_dict: Dict {regularization_param: results_dict}
+                     For example: {'1e-05': results1, '1e-04': results2, ...}
+                     OR a list of results (then regularization_values is used)
+        n_remove_list: List of removal percentages [10, 20, 30, ...]
+        logger: Logger used to save the plot
+        title_suffix: Extra text for the title
+        regularization_values: List of regularization parameter names for the legend
+                              (used if results_dict is a list)
     """
-    # Параметры стиля в точном соответствии с на plot_results_enhanced
+    # Style parameters exactly as in plot_results_enhanced
     regularization_colors = {
-        '1e-05': '#9b59b6',    # Фиолетовый (базовый цвет Influence)
-        '1e-04': '#8e44ad',    # Более тёмный фиолетовый
-        '1e-03': '#6c3483',    # Ещё более тёмный фиолетовый
-        '1e-02': '#4a235a',    # Тёмный фиолетовый
+        '1e-05': '#9b59b6',    # Purple (base color of Influence)
+        '1e-04': '#8e44ad',    # Darker purple
+        '1e-03': '#6c3483',    # Even darker purple
+        '1e-02': '#4a235a',    # Dark purple
         '0.0001': '#8e44ad',
         '0.001': '#6c3483',
         '0.01': '#4a235a',
     }
     
     regularization_linestyles = {
-        '1e-05': '-',      # Сплошная
-        '1e-04': '--',     # Пунктир
-        '1e-03': '-.',     # Штрих-пунктир
-        '1e-02': ':',      # Точки
+        '1e-05': '-',      # Solid
+        '1e-04': '--',     # Dashed
+        '1e-03': '-.',     # Dash-dot
+        '1e-02': ':',      # Dotted
         '0.0001': '--',
         '0.001': '-.',
         '0.01': ':',
     }
     
     regularization_markers = {
-        '1e-05': 'o',      # Круг
-        '1e-04': 's',      # Квадрат
-        '1e-03': '^',      # Треугольник
-        '1e-02': 'D',      # Ромб
+        '1e-05': 'o',      # Circle
+        '1e-04': 's',      # Square
+        '1e-03': '^',      # Triangle
+        '1e-02': 'D',      # Diamond
         '0.0001': 's',
         '0.001': '^',
         '0.01': 'D',
     }
     
-    # Инициализация
+    # Initialization
     if logger:
         logger.log_message("Creating Influence_lowest comparison by regularization...")
     else:
         debug_print("Creating Influence_lowest comparison by regularization...")
     
-    # Преобразуем список в словарь, если нужно
+    # Convert the list to a dict if needed
     if isinstance(results_dict, (list, tuple)) and regularization_values:
         results_dict = {str(reg): res for reg, res in zip(regularization_values, results_dict)}
     
@@ -1005,11 +1005,11 @@ def plot_influence_lowest_by_regularization(
             debug_print("ERROR: results_dict is empty!")
         return None
     
-    # Создаём фигуру
+    # Create the figure
     fig = plt.figure(figsize=(14, 8))
     plt.rcParams['agg.path.chunksize'] = 10000
     
-    # Получаем метрики из первого результата
+    # Get the metrics from the first result
     first_results = list(results_dict.values())[0]
     metric_ctx = _get_metric_context(first_results)
     metric_short_label = metric_ctx['short_label_ru']
@@ -1017,7 +1017,7 @@ def plot_influence_lowest_by_regularization(
     
     x_points = [0] + n_remove_list
     
-    # Рисуем базовую модель (в первом результате)
+    # Draw the base model (in the first result)
     if 'orig' in first_results:
         baseline_metric = _extract_metric_value(first_results['orig'], metric_ctx['final_key'])
         plt.plot(
@@ -1030,14 +1030,14 @@ def plot_influence_lowest_by_regularization(
             markersize=5,
         )
     
-    # Для каждого параметра регуляризации рисуем Influence_lowest
+    # For each regularization parameter draw Influence_lowest
     for reg_param, results in sorted(results_dict.items()):
-        # Получаем цвет, стиль линии и маркер
+        # Get the color, line style and marker
         color = regularization_colors.get(reg_param, '#9b59b6')
         linestyle = regularization_linestyles.get(reg_param, '-')
         marker = regularization_markers.get(reg_param, 'o')
         
-        # Извлекаем значения Influence_lowest
+        # Extract the Influence_lowest values
         metric_values = []
         
         if 'orig' in results:
@@ -1050,7 +1050,7 @@ def plot_influence_lowest_by_regularization(
             else:
                 metric_values.append(float('nan'))
         
-        # Рисуем линию только для валидных точек
+        # Draw the line only for valid points
         if len(metric_values) > 0:
             valid_indices = [i for i, val in enumerate(metric_values) if not np.isnan(val)]
             if len(valid_indices) > 0:
@@ -1068,7 +1068,7 @@ def plot_influence_lowest_by_regularization(
                     label=f'Regularization = {reg_param}',
                 )
     
-    # Базовая линия модели
+    # Model baseline
     if 'orig' in first_results:
         baseline_metric = _extract_metric_value(first_results['orig'], metric_ctx['final_key'])
         plt.axhline(
@@ -1080,7 +1080,7 @@ def plot_influence_lowest_by_regularization(
             label='Базовая модель'
         )
     
-    # Оформление графика
+    # Plot styling
     plt.xlabel('Доля удалённых объектов, %', fontsize=12)
     plt.ylabel(f'{metric_label_ru} на валидации', fontsize=12)
     plt.title(

@@ -6,9 +6,9 @@ import torch.optim as optim
 from .base import BaseModel
 from config.settings import DEVICE
 
-# [AUDIT-FIX B9] pyDVL обучает модели параллельно (joblib threading). Глобальный RNG torch
-# общий для потоков: без блокировки manual_seed+init+dropout разных потоков перемешиваются,
-# refit_seed перестаёт давать детерминизм и LOO превращается в шум.
+# [AUDIT-FIX B9] pyDVL trains models in parallel (joblib threading). The global torch RNG
+# is shared by the threads: without a lock, manual_seed+init+dropout of different threads interleave,
+# refit_seed stops being deterministic and LOO turns into noise.
 _REFIT_LOCK = threading.RLock()
 
 # Default PyTorch model configurations
@@ -178,20 +178,20 @@ class SimpleFTTransformer(nn.Module):
 
 
 class PyTorchModelWrapper(BaseModel):
-    """Обертка для PyTorch моделей для совместимости.
-    Регрессия (MSELoss), бинарная классификация (BCEWithLogitsLoss),
-    многоклассовая классификация (CrossEntropyLoss, K логитов).
+    """Wrapper around PyTorch models for compatibility.
+    Regression (MSELoss), binary classification (BCEWithLogitsLoss),
+    multiclass classification (CrossEntropyLoss, K logits).
     """
 
-    # Число полных (full-batch) эпох для fit(X, y) без явного epochs — так модель обучают
-    # pyDVL-методы (LOO/TMC/...) на каждом подмножестве. Раньше было 5 эпох => модель почти не училась.
+    # Number of full-batch epochs for fit(X, y) without explicit epochs; this is how
+    # pyDVL methods (LOO/TMC/...) train the model on each subset. Previously 5 epochs => the model barely learned.
     DEFAULT_FIT_EPOCHS = 200
 
     def __init__(self, input_size, model_architecture='simple', device=DEVICE, task_type='regression', pos_weight=None, **kwargs):
         super().__init__()
-        # [AUDIT-FIX B1] Запоминаем ВСЕ аргументы конструктора как есть (те же объекты),
-        # чтобы sklearn.clone() (его использует pyDVL ModelUtility) воссоздавал ту же модель:
-        # тот же task_type/loss, архитектуру, lr, pos_weight, num_classes, эпохи.
+        # [AUDIT-FIX B1] Store ALL constructor arguments as is (the same objects),
+        # so that sklearn.clone() (used by pyDVL ModelUtility) recreates the same model:
+        # the same task_type/loss, architecture, lr, pos_weight, num_classes, epochs.
         self._ctor_params = dict(
             input_size=input_size,
             model_architecture=model_architecture,
@@ -209,7 +209,7 @@ class PyTorchModelWrapper(BaseModel):
         # mini-batches of that size per epoch (a real epoch), also for pyDVL refits (default_epochs epochs).
         bs = kwargs.pop('batch_size', None)
         self.batch_size = int(bs) if bs else None
-        with _REFIT_LOCK:  # [B9] init тоже тратит глобальный RNG — не даём ему вклиниться в чужой seeded refit
+        with _REFIT_LOCK:  # [B9] init also consumes the global RNG; do not let it interfere with another seeded refit
             self._build(input_size, model_architecture, device, task_type, pos_weight, kwargs)
 
     def _build(self, input_size, model_architecture, device, task_type, pos_weight, kwargs):
@@ -274,7 +274,7 @@ class PyTorchModelWrapper(BaseModel):
         self.val_losses_for_scheduler = []
 
     def _rebuild_from_scratch(self):
-        """Новая инициализация весов/оптимизатора (детерминированно, если задан refit_seed)."""
+        """New initialization of weights/optimizer (deterministic if refit_seed is set)."""
         if self.refit_seed is not None:
             torch.manual_seed(int(self.refit_seed))
         p = dict(self._ctor_params)
@@ -286,14 +286,14 @@ class PyTorchModelWrapper(BaseModel):
 
     def fit(self, X, y, epochs=None, **kwargs):
         """
-        epochs задан  -> дообучить текущие веса на epochs full-batch шагов (так делает
-                         основной цикл train_and_evaluate: fit(..., epochs=1) на каждой эпохе).
-        epochs=None   -> sklearn-семантика «обучить с нуля»: переинициализация и
-                         self.default_epochs шагов (так вызывает pyDVL на подмножествах).
+        epochs given  -> continue training the current weights for epochs full-batch steps (this is what
+                         the main train_and_evaluate loop does: fit(..., epochs=1) every epoch).
+        epochs=None   -> sklearn semantics "train from scratch": reinitialize and run
+                         self.default_epochs steps (this is how pyDVL calls it on subsets).
         """
         if epochs is None:
             if self.refit_seed is not None:
-                # [B9] детерминированный refit: сериализуем и изолируем глобальный RNG
+                # [B9] deterministic refit: serialize and isolate the global RNG
                 with _REFIT_LOCK, torch.random.fork_rng(devices=[]):
                     self._rebuild_from_scratch()
                     return self._train_steps(X, y, self.default_epochs)
@@ -339,7 +339,7 @@ class PyTorchModelWrapper(BaseModel):
             return out.cpu().numpy().flatten()
 
     def predict_proba(self, X):
-        """Вероятности классов: binary — [P(0), P(1)]; multiclass — softmax."""
+        """Class probabilities: binary - [P(0), P(1)]; multiclass - softmax."""
         self.model.eval()
         with torch.no_grad():
             if self.task_type == 'binary_classification':
@@ -357,7 +357,7 @@ class PyTorchModelWrapper(BaseModel):
         return self.model.named_parameters()
 
     def get_params(self, deep=True):
-        """[AUDIT-FIX B1] Все аргументы конструктора (sklearn.clone -> идентичная конфигурация)."""
+        """[AUDIT-FIX B1] All constructor arguments (sklearn.clone -> identical configuration)."""
         return dict(self._ctor_params)
 
     def set_params(self, **params):
@@ -368,7 +368,7 @@ class PyTorchModelWrapper(BaseModel):
 
 
 class DistilledModelWrapper(BaseModel):
-    """Обертка для дистилляции не-нейросетевых моделей в нейросеть"""
+    """Wrapper that distills non-neural models into a neural network"""
 
     def __init__(self, base_model, input_size, device='cpu', model_architecture='simple',
                  distillation_epochs=50, temperature=2.0, num_classes=1, task_type='regression',
@@ -437,7 +437,7 @@ class DistilledModelWrapper(BaseModel):
             if hasattr(self.base_model, 'predict_proba'):
                 return self._soften(self._safe_probs(self.base_model.predict_proba(X)))
             raw = np.asarray(self.base_model.predict(X))
-            # LightGBM multiclass: predict даёт матрицу (N, C), не индексы классов.
+            # LightGBM multiclass: predict returns an (N, C) matrix, not class indices.
             if raw.ndim == 2 and raw.shape[1] > 1:
                 return self._soften(self._safe_probs(raw))
             preds = raw.reshape(-1)
@@ -461,9 +461,9 @@ class DistilledModelWrapper(BaseModel):
 
     def fit(self, X, y, epochs=None, X_val=None, y_val=None, **kwargs):
         from experiments.logger import debug_print
-        # Сначала обучаем базовую модель
+        # Train the base model first
         debug_print("Training base model for distillation...")
-        # Передаем параметры валидации базовой модели, если она их поддерживает
+        # Pass validation parameters to the base model if it supports them
         fit_kwargs = {}
         if X_val is not None and y_val is not None:
             fit_kwargs['X_val'] = X_val
@@ -477,12 +477,12 @@ class DistilledModelWrapper(BaseModel):
             self._build_student()
             self.is_distilled = False
 
-        # Получаем "мягкие" предсказания от базовой модели
+        # Get "soft" predictions from the base model
         debug_print("Generating teacher predictions for distillation...")
         teacher_predictions = self._teacher_targets(X)
         teacher_predictions = np.asarray(teacher_predictions)
 
-        # Преобразуем в тензоры: для многокласса храним вероятности по классам.
+        # Convert to tensors: for multiclass keep per-class probabilities.
         X_tensor = torch.FloatTensor(X).to(self.device)
         teacher_tensor = torch.FloatTensor(teacher_predictions).to(self.device)
 
@@ -493,7 +493,7 @@ class DistilledModelWrapper(BaseModel):
             X_val_tensor = torch.FloatTensor(X_val).to(self.device)
             teacher_val_tensor = torch.FloatTensor(teacher_val_predictions).to(self.device)
 
-        # Обучаем студенческую модель имитировать учителя с early stopping по val loss.
+        # Train the student model to imitate the teacher with early stopping on val loss.
         self.student_model.train()
         best_state = None
         best_val_loss = float('inf')
@@ -564,13 +564,13 @@ class DistilledModelWrapper(BaseModel):
         return best_train_loss if np.isfinite(best_train_loss) else float(last_loss or 0.0)
 
     def predict(self, X):
-        # Для согласованности с influence используем student после дистилляции.
+        # For consistency with influence, use the student after distillation.
         if not self.is_distilled:
             return self.base_model.predict(X)
         return self.student_predict(X)
 
     def student_predict(self, X):
-        """Предсказания студенческой модели (для influence методов)"""
+        """Predictions of the student model (for influence methods)"""
         if not self.is_distilled:
             raise ValueError("Student model not distilled yet. Call fit first.")
 
@@ -585,7 +585,7 @@ class DistilledModelWrapper(BaseModel):
             return out_np.flatten() if out_np.ndim == 1 or out_np.shape[1] == 1 else out_np
 
     def predict_proba(self, X):
-        """Вероятности классов студенческой модели для классификации."""
+        """Class probabilities of the student model for classification."""
         if self.task_type not in ('binary_classification', 'multiclass_classification'):
             raise AttributeError("predict_proba is only defined for classification tasks")
         if not self.is_distilled:
@@ -603,13 +603,13 @@ class DistilledModelWrapper(BaseModel):
             return torch.softmax(logits, dim=1).cpu().numpy()
 
     def named_parameters(self):
-        """Предсказания параметров студенческой модели для influence методов"""
+        """Student model parameters for influence methods"""
         if not self.is_distilled:
             raise ValueError("Student model not distilled yet. Call fit first.")
         return self.student_model.named_parameters()
 
     def get_params(self, deep=True):
-        """Возвращает параметры модели (совместимость с sklearn)"""
+        """Return the model parameters (sklearn compatibility)"""
         return {
             'base_model': self.base_model,
             'input_size': self.input_size,
@@ -617,7 +617,7 @@ class DistilledModelWrapper(BaseModel):
             'model_architecture': self.model_architecture,
             'distillation_epochs': self.distillation_epochs,
             'temperature': self.temperature,
-            'num_classes': self.num_classes,  # [AUDIT-FIX B1] раньше терялся при clone()
+            'num_classes': self.num_classes,  # [AUDIT-FIX B1] previously lost on clone()
             'task_type': self.task_type,
             'batch_size': self.batch_size,
         }

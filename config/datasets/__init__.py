@@ -1,4 +1,4 @@
-"""Реестр конфигураций датасетов"""
+"""Registry of dataset configurations"""
 
 from typing import Dict, Type, Optional
 from .base import BaseDatasetConfig, PreprocessingConfig
@@ -14,18 +14,18 @@ from .cifar10 import Cifar10Config
 
 
 class DatasetRegistry:
-    """Реестр для управления конфигурациями датасетов"""
+    """Registry that manages dataset configurations"""
 
     _registry: Dict[str, Type[BaseDatasetConfig]] = {}
 
     @classmethod
     def register(cls, name: str, config_class: Type[BaseDatasetConfig]) -> None:
         """
-        Регистрировать конфигурацию датасета
+        Register a dataset configuration
         
         Args:
-            name: Уникальное имя датасета
-            config_class: Класс конфигурации
+            name: Unique dataset name
+            config_class: Configuration class
         """
         if name in cls._registry:
             print(f"Warning: Dataset '{name}' already registered. Overwriting...")
@@ -34,16 +34,16 @@ class DatasetRegistry:
     @classmethod
     def get(cls, name: str) -> BaseDatasetConfig:
         """
-        Получить конфигурацию датасета
+        Get a dataset configuration
         
         Args:
-            name: Имя датасета
+            name: Dataset name
             
         Returns:
-            Экземпляр конфигурации датасета
+            Dataset configuration instance
             
         Raises:
-            KeyError: Если датасет не зарегистрирован
+            KeyError: If the dataset is not registered
         """
         if name not in cls._registry:
             available = ', '.join(cls._registry.keys())
@@ -54,12 +54,12 @@ class DatasetRegistry:
 
     @classmethod
     def list(cls) -> list:
-        """Получить список всех зарегистрированных датасетов"""
+        """Get the list of all registered datasets"""
         return list(cls._registry.keys())
 
     @classmethod
     def get_all_info(cls) -> Dict[str, dict]:
-        """Получить информацию по всем датасетам"""
+        """Get information about all datasets"""
         info = {}
         for name in cls._registry:
             config = cls.get(name)
@@ -68,12 +68,12 @@ class DatasetRegistry:
 
     @classmethod
     def is_registered(cls, name: str) -> bool:
-        """Проверить, зарегистрирован ли датасет"""
+        """Check whether a dataset is registered"""
         return name in cls._registry
 
 
-# ===== РЕГИСТРАЦИЯ ДАТАСЕТОВ =====
-# Регистрируем все известные датасеты
+# ===== DATASET REGISTRATION =====
+# Register all known datasets
 DatasetRegistry.register('adult', AdultConfig)
 DatasetRegistry.register('housing', HousingConfig)
 DatasetRegistry.register('wine', WineConfig)
@@ -85,7 +85,7 @@ DatasetRegistry.register('imdb', ImdbConfig)
 DatasetRegistry.register('cifar10', Cifar10Config)
 
 
-# Экспортируем для удобства
+# Export for convenience
 __all__ = [
     'DatasetRegistry',
     'BaseDatasetConfig',

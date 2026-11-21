@@ -99,17 +99,17 @@ class RemovalPhaseMixin:
                     n_strata_expected = None
             if strata_labels is None and self.logger:
                 self.logger.log_message(
-                    "[WARN] removal_stratify_target: не удалось построить страты по y, используется глобальный removal."
+                    "[WARN] removal_stratify_target: could not build strata over y, using global removal."
                 )
 
         if self.logger and removal_per_class and n_classes_expected:
             self.logger.log_message(
-                "[OK] removal_per_class=True: ранжирование и доля удалений по каждому классу отдельно."
+                "[OK] removal_per_class=True: ranking and removal share per class."
             )
         if self.logger and strata_labels is not None and n_strata_expected:
             self.logger.log_message(
-                f"[OK] removal_stratify_target=True: ранжирование и доля удалений по стратам целевой "
-                f"(квантильные бины, {n_strata_expected} страт)."
+                f"[OK] removal_stratify_target=True: ranking and removal share per stratum of the target "
+                f"(quantile bins, {n_strata_expected} strata)."
             )
 
         if self.logger:
@@ -145,11 +145,11 @@ class RemovalPhaseMixin:
             if self.logger:
                 self.logger.log_message(f"\nProcessing method: {method}")
             if not np.all(np.isfinite(np.asarray(vals, dtype=float))):
-                # [AUDIT-FIX B3] невалидные скоры (NaN) не сортируем — метод пропускается
+                # [AUDIT-FIX B3] invalid scores (NaN) are not sorted - the method is skipped
                 invalid = self.results.setdefault('orig', {}).setdefault('invalid_methods', {})
                 invalid.setdefault(method, 'non-finite scores')
                 if self.logger:
-                    self.logger.log_message(f"  [SKIP] {method}: невалидные скоры (NaN/inf), кривая не строится")
+                    self.logger.log_message(f"  [SKIP] {method}: invalid scores (NaN/inf), no curve is built")
                 continue
 
             is_influence_method = method in influence_method_names
@@ -376,8 +376,8 @@ class RemovalPhaseMixin:
                     if self.logger:
                         self.logger.log_message(f"  LossLow: remove lowest loss first")
                 else:
-                    # [AUDIT-FIX B2] Скореры теперь всегда «больше = лучше» (MAE -> -MAE),
-                    # поэтому ценность valuation-методов: больше = ценнее. Удаляем наименее ценные.
+                    # [AUDIT-FIX B2] Scorers are now always higher-is-better (MAE -> -MAE),
+                    # so for valuation methods higher = more valuable. Remove the least valuable.
                     idx_sorted = np.argsort(vals)
                     if self.logger:
                         self.logger.log_message(f"  Valuation method {method}: remove lowest value first")
@@ -395,7 +395,7 @@ class RemovalPhaseMixin:
                             np.asarray(vals).ravel(),
                             y_train,
                             n_to_remove,
-                            True,  # [AUDIT-FIX B2] ценности: больше = ценнее
+                            True,  # [AUDIT-FIX B2] values: higher = more valuable
                             remove_smallest_first=loss_remove_smallest_first,
                         )
                     elif strata_labels is not None:
@@ -403,7 +403,7 @@ class RemovalPhaseMixin:
                             np.asarray(vals).ravel(),
                             strata_labels,
                             n_to_remove,
-                            True,  # [AUDIT-FIX B2] ценности: больше = ценнее
+                            True,  # [AUDIT-FIX B2] values: higher = more valuable
                             remove_smallest_first=loss_remove_smallest_first,
                         )
                     else:

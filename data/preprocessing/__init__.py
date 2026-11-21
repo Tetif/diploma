@@ -1,4 +1,4 @@
-"""Модуль предобработки данных"""
+"""Data preprocessing module"""
 
 from .base import BasePreprocessor
 from .tabular import TabularPreprocessor

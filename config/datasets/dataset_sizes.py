@@ -1,10 +1,10 @@
-"""Объём выборки для подсказок в UI: точные значения где известны, иначе оценка."""
+"""Sample sizes for UI hints: exact values where known, otherwise an estimate."""
 
 from __future__ import annotations
 
 from typing import Optional
 
-# Число наблюдений после загрузки (wine — по фактическому WineQT.csv в репозитории)
+# Number of rows after loading (wine - from the actual WineQT.csv in the repository)
 APPROX_N_SAMPLES: dict[str, int] = {
     "adult": 32_561,
     "housing": 20_640,

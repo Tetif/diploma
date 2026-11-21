@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 
 class BaseModel(ABC):
-    """Базовый класс для всех моделей"""
+    """Base class for all models"""
 
     @abstractmethod
     def fit(self, X, y, **kwargs):
@@ -16,7 +16,7 @@ class BaseModel(ABC):
         return []
 
     def get_params(self, deep=True):
-        """Возвращает параметры модели (совместимость с sklearn)"""
+        """Return the model parameters (sklearn compatibility)"""
         return {}
 
     def set_params(self, **params):

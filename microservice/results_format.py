@@ -21,8 +21,8 @@ from visualization.plots import (
 #   active        – True to enable
 #   magnitude     – fraction of baseline: full shift = baseline × magnitude
 #                   (lower-is-better: subtract; higher-is-better: add)
-#   ramp_to_pct   – scale = 1−(1−t)² при t=pct/ramp (парабола «в другую сторону»:
-#                   быстрее в начале, к ramp — плавно к полному сдвигу)
+#   ramp_to_pct   - scale = 1-(1-t)^2 with t=pct/ramp (parabola "the other way":
+#                   faster at the start, smoothly reaching the full shift at ramp)
 #   pass_through  – base method names left unchanged (random, loss baselines)
 # ---------------------------------------------------------------------------
 _METRIC_DENOISE = {
@@ -34,7 +34,7 @@ _METRIC_DENOISE = {
 
 
 def get_metric_denoise_defaults() -> Dict[str, Any]:
-    """Значения по умолчанию из `_METRIC_DENOISE` (для UI / API)."""
+    """Default values from `_METRIC_DENOISE` (for UI / API)."""
     pt = _METRIC_DENOISE.get("pass_through") or set()
     return {
         "active": bool(_METRIC_DENOISE.get("active", True)),
@@ -48,8 +48,8 @@ def resolve_denoise_config(
     overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Полная конфигурация коррекции: база из `_METRIC_DENOISE`, затем частичные overrides
-    (active, magnitude, ramp_to_pct, pass_through — строка через запятую или iterable).
+    Full correction config: the base from `_METRIC_DENOISE`, then partial overrides
+    (active, magnitude, ramp_to_pct, pass_through - a comma-separated string or an iterable).
     """
     cfg: Dict[str, Any] = {
         "active": bool(_METRIC_DENOISE.get("active", True)),
@@ -75,7 +75,7 @@ def resolve_denoise_config(
 
 
 def denoise_config_to_json(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Сериализация для JSON (pass_through — отсортированный список)."""
+    """Serialization for JSON (pass_through as a sorted list)."""
     pt = cfg.get("pass_through") or set()
     if isinstance(pt, (list, tuple)):
         pt = set(pt)
@@ -104,8 +104,8 @@ def _apply_denoise(
     higher_is_better: bool,
     denoise_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """Full shift = baseline × magnitude; t=min(1,pct/ramp), scale=1−(1−t)² (ease-out
-    парабола), далее полный сдвиг."""
+    """Full shift = baseline * magnitude; t=min(1,pct/ramp), scale=1-(1-t)^2 (ease-out
+    parabola), then the full shift."""
     cfg = resolve_denoise_config(denoise_overrides)
     if not cfg["active"] or baseline is None:
         return removal_data
@@ -205,7 +205,7 @@ def build_removal_series(
     """
     Build per-method removal curves and metric metadata.
     Keys in `results` follow runner naming: `{plot_method}_{pct}pct`.
-    denoise_overrides — частичное переопределение `_METRIC_DENOISE` (API / UI).
+    denoise_overrides - partial override of `_METRIC_DENOISE` (API / UI).
     """
     if not results:
         return {
@@ -300,7 +300,7 @@ def jsonify_random_run_results(
 
 
 def load_random_run_results_supplement(experiment_dir: Optional[str]) -> Optional[Dict[Any, Any]]:
-    """Если в JSON storage нет random_run_results — читаем из results.pkl логгера."""
+    """If the JSON storage has no random_run_results, read them from the logger's results.pkl."""
     if not experiment_dir:
         return None
     p = Path(experiment_dir) / "results.pkl"
@@ -318,7 +318,7 @@ def load_computation_timings_from_results_pkl(
     experiment_dir: Optional[str],
 ) -> List[Dict[str, Any]]:
     """
-    Строки по этапам *_computation из results.pkl (как в plot_method_comparison_bars).
+    Rows per *_computation stage from results.pkl (as in plot_method_comparison_bars).
     """
     if not experiment_dir:
         return []
@@ -364,7 +364,7 @@ def load_computation_timings_from_results_pkl(
 def build_removal_aucs_json(
     results: Dict[str, Any], n_remove_list: List[int]
 ) -> Dict[str, Optional[float]]:
-    """AUC кривых removal для API (NaN → None)."""
+    """AUC of the removal curves for the API (NaN -> None)."""
     if not results or not n_remove_list:
         return {}
     aucs = compute_removal_curve_aucs(results, n_remove_list)

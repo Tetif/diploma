@@ -1,6 +1,6 @@
 """
-Базовый класс для конфигурации датасетов.
-Определяет интерфейс для работы с различными датасетами.
+Base class for dataset configurations.
+Defines the interface for working with different datasets.
 """
 
 from typing import List, Tuple, Optional, Dict, Any
@@ -10,7 +10,7 @@ import numpy as np
 
 
 class PreprocessingConfig:
-    """Конфигурация предобработки для датасета"""
+    """Preprocessing configuration for a dataset"""
 
     def __init__(self):
         self.handle_missing_values: bool = True
@@ -20,85 +20,85 @@ class PreprocessingConfig:
         self.remove_outliers: bool = False
         self.create_features: bool = False
         
-        # Специфичные параметры для датасета (переопределяются в подклассах)
+        # Dataset-specific parameters (overridden in subclasses)
         self.custom_preprocessing_steps: List[str] = []
 
 
 class BaseDatasetConfig(ABC):
-    """Абстрактный базовый класс конфигурации датасета"""
+    """Abstract base class of a dataset configuration"""
 
-    # ===== ИДЕНТИФИКАЦИЯ =====
-    name: str  # Уникальное имя датасета
-    description: str  # Описание датасета
+    # ===== IDENTIFICATION =====
+    name: str  # Unique dataset name
+    description: str  # Dataset description
     data_type: str  # 'tabular', 'text', 'image', 'sequence'
     task_type: str  # 'regression', 'binary_classification', 'multiclass_classification'
 
-    # ===== ПУТИ =====
-    data_path: str  # Базовый путь к данным
-    required_files: List[str]  # Необходимые файлы
+    # ===== PATHS =====
+    data_path: str  # Base data path
+    required_files: List[str]  # Required files
 
-    # ===== СТРУКТУРА ДАННЫХ =====
-    target_column: str  # Название целевой переменной
-    id_column: Optional[str] = None  # Идентификатор (если есть)
-    columns_to_drop: List[str]  # Колонки, которые нужно удалить
-    categorical_columns: List[str]  # Категориальные признаки
-    numeric_columns: List[str]  # Числовые признаки
+    # ===== DATA STRUCTURE =====
+    target_column: str  # Target variable name
+    id_column: Optional[str] = None  # Identifier column (if any)
+    columns_to_drop: List[str]  # Columns to drop
+    categorical_columns: List[str]  # Categorical features
+    numeric_columns: List[str]  # Numeric features
 
-    # ===== ПАРАМЕТРЫ РАЗДЕЛЕНИЯ =====
-    test_size: float = 0.2  # Размер тестового множества
-    val_size: float = 0.1  # Размер валидационного множества
+    # ===== SPLIT PARAMETERS =====
+    test_size: float = 0.2  # Test set size
+    val_size: float = 0.1  # Validation set size
     random_state: int = 42
-    stratify: bool = False  # Стратифицированное разделение (для классификации)
-    use_time_split: bool = False  # Использовать хронологическое разделение для временных рядов
+    stratify: bool = False  # Stratified split (classification)
+    use_time_split: bool = False  # Use a chronological split for time series
 
-    # ===== МЕТРИКИ =====
-    metrics: List[str]  # Метрики для оценки
+    # ===== METRICS =====
+    metrics: List[str]  # Evaluation metrics
 
-    # ===== ЛОГИ ЭКСПЕРИМЕНТА =====
-    # None — использовать EXPERIMENT_CONFIG['show_top_bottom_influence']; 0 — отключить (напр. широкий TF-IDF).
+    # ===== EXPERIMENT LOGS =====
+    # None - use EXPERIMENT_CONFIG['show_top_bottom_influence']; 0 - disable (e.g. wide TF-IDF).
     show_top_bottom_influence: Optional[int] = None
 
-    # ===== КОНФИГУРАЦИЯ ПРЕДОБРАБОТКИ =====
+    # ===== PREPROCESSING CONFIGURATION =====
     preprocessing_config: PreprocessingConfig
 
     def __init__(self):
-        """Инициализация конфига"""
+        """Initialize the config"""
         if not hasattr(self, 'preprocessing_config') or self.preprocessing_config is None:
             self.preprocessing_config = PreprocessingConfig()
 
     @abstractmethod
     def load_data(self) -> Tuple[pd.DataFrame, pd.Series]:
         """
-        Загрузить данные датасета
+        Load the dataset
         
         Returns:
-            Tuple[pd.DataFrame, pd.Series]: (признаки, целевая переменная)
+            Tuple[pd.DataFrame, pd.Series]: (features, target)
         """
         pass
 
     @abstractmethod
     def validate_data(self, df: pd.DataFrame) -> bool:
         """
-        Валидировать загруженные данные
+        Validate the loaded data
         
         Args:
-            df: DataFrame с данными
+            df: DataFrame with the data
             
         Returns:
-            bool: True если данные валидны
+            bool: True if the data is valid
         """
         pass
 
     def get_preprocessing_config(self) -> PreprocessingConfig:
-        """Получить конфиг предобработки"""
+        """Get the preprocessing config"""
         return self.preprocessing_config
 
     def get_all_features(self) -> List[str]:
-        """Получить все признаки (категориальные + числовые)"""
+        """Get all features (categorical + numeric)"""
         return self.categorical_columns + self.numeric_columns
 
     def get_info(self) -> Dict[str, Any]:
-        """Получить информацию о датасете"""
+        """Get information about the dataset"""
         return {
             'name': self.name,
             'description': self.description,

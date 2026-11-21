@@ -16,7 +16,7 @@ from experiments.removal_strategies import CLASSIFICATION_TASKS
 
 
 def _pred_to_labels(y_pred, task_type):
-    """Приводит предсказания к меткам классов для метрик классификации."""
+    """Convert predictions to class labels for classification metrics."""
     if task_type not in CLASSIFICATION_TASKS:
         return y_pred
     y_pred = np.asarray(y_pred)
@@ -28,7 +28,7 @@ def _pred_to_labels(y_pred, task_type):
 
 
 def _calculate_metric(y_true, y_pred, task_type, metric_name):
-    """Значение выбранной метрики (регрессия или классификация)."""
+    """Value of the selected metric (regression or classification)."""
     y_true = np.asarray(y_true).reshape(-1)
     y_pred = np.asarray(y_pred)
 
@@ -61,7 +61,7 @@ def _calculate_metric(y_true, y_pred, task_type, metric_name):
 
 
 def _is_better_metric(current_value, best_value, higher_is_better):
-    """Сравнение метрик с учётом направления оптимизации."""
+    """Compare metrics taking the optimization direction into account."""
     if higher_is_better:
         return current_value > best_value
     return current_value < best_value
@@ -69,17 +69,17 @@ def _is_better_metric(current_value, best_value, higher_is_better):
 
 def compute_per_sample_loss(pipeline, X_train, y_train, task_type):
     """
-    Вычисляет loss для каждого примера обучающей выборки на обученной модели.
-    Используется для стратегий удаления remove_high_loss / remove_low_loss.
+    Compute the per-sample loss of the trained model on the training set.
+    Used by the removal strategies remove_high_loss / remove_low_loss.
 
-    - Регрессия: квадрат ошибки (y - pred)^2. Предсказания модели могут быть
-      в масштабированном пространстве (если модель обучалась на scaled y),
-      поэтому y масштабируется тем же способом для согласованности.
-    - Классификация: кросс-энтропия по примеру (-log p_correct), при отсутствии
-      predict_proba — 0/1 loss (1 при ошибке, 0 при верном предсказании).
+    - Regression: squared error (y - pred)^2. The model predictions may be
+      in the scaled space (if the model was trained on scaled y),
+      so y is scaled the same way for consistency.
+    - Classification: per-sample cross-entropy (-log p_correct); without
+      predict_proba - 0/1 loss (1 if wrong, 0 if correct).
 
     Returns:
-        np.ndarray длины len(X_train) — loss для каждого примера.
+        np.ndarray of length len(X_train) - loss of each sample.
     """
     X_tr = pipeline.named_steps['preproc'].transform(X_train)
     if hasattr(X_tr, 'toarray'):
@@ -90,12 +90,12 @@ def compute_per_sample_loss(pipeline, X_train, y_train, task_type):
     if task_type == 'regression':
         y_pred = model.predict(X_tr)
         y_pred = np.asarray(y_pred).ravel()
-        # В train_and_evaluate регрессия обучается на scaled y — масштабируем y_true так же.
+        # In train_and_evaluate regression is trained on scaled y - scale y_true the same way.
         y_scaled = StandardScaler().fit_transform(y_true.reshape(-1, 1)).ravel()
         loss = (y_scaled - y_pred) ** 2
         return np.asarray(loss, dtype=float)
 
-    # Классификация
+    # Classification
     if hasattr(model, 'predict_proba'):
         proba = model.predict_proba(X_tr)
         n = len(y_true)
@@ -106,7 +106,7 @@ def compute_per_sample_loss(pipeline, X_train, y_train, task_type):
             p_correct = np.where(y_int == 1, proba.ravel(), 1 - proba.ravel())
         p_correct = np.clip(p_correct, 1e-15, 1 - 1e-15)
         return -np.log(p_correct)
-    # Нет predict_proba: используем 0/1 loss (1 при ошибке)
+    # No predict_proba: use the 0/1 loss (1 if wrong)
     y_pred = model.predict(X_tr)
     y_pred = _pred_to_labels(y_pred, task_type)
     y_true_int = np.asarray(y_true, dtype=int)

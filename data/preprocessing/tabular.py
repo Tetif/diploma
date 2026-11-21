@@ -1,5 +1,5 @@
 """
-Предобработчик для табличных данных.
+Preprocessor for tabular data.
 """
 
 import pandas as pd
@@ -16,15 +16,15 @@ from experiments.logger import debug_print
 
 
 class TabularPreprocessor(BasePreprocessor):
-    """Предобработчик для табличных данных"""
+    """Preprocessor for tabular data"""
 
     def __init__(self, dataset_config: BaseDatasetConfig, logger=None):
         """
-        Инициализация табличного предобработчика
+        Initialize the tabular preprocessor
         
         Args:
-            dataset_config: Конфигурация датасета
-            logger: Логгер для вывода информации
+            dataset_config: Dataset configuration
+            logger: Logger for output
         """
         super().__init__(logger)
         self.dataset_config = dataset_config
@@ -35,38 +35,38 @@ class TabularPreprocessor(BasePreprocessor):
 
     def fit(self, X: pd.DataFrame, y: pd.Series = None) -> 'TabularPreprocessor':
         """
-        Подогнать предобработчик на данные
+        Fit the preprocessor on the data
         
         Args:
-            X: Признаки
-            y: Целевая переменная (опционально)
+            X: Features
+            y: Target (optional)
             
         Returns:
             self
         """
         debug_print("Building preprocessing pipeline...")
 
-        # Если X это numpy array, это ошибка
+        # X being a numpy array is an error
         if isinstance(X, np.ndarray):
             raise ValueError("fit() requires a pandas DataFrame, got numpy array")
 
-        # Сохраняем исходные колонки для использования в transform
+        # Keep the original columns for use in transform
         self._original_columns = X.columns.tolist()
 
-        # Фильтруем только те колонки, которые есть в данных
+        # Keep only the columns present in the data
         numeric_cols = [c for c in self.numeric_cols if c in X.columns]
         categorical_cols = [c for c in self.categorical_cols if c in X.columns]
 
         debug_print(f"  Numeric columns: {len(numeric_cols)}")
         debug_print(f"  Categorical columns: {len(categorical_cols)}")
 
-        # Преобразуем категориальные колонки в строки и заполняем NaN
+        # Convert categorical columns to strings and fill NaN
         X_copy = X.copy()
         for col in categorical_cols:
             if col in X_copy.columns:
-                # Заполняем NaN значения перед конвертацией типа
+                # Fill NaN values before the type conversion
                 X_copy[col] = X_copy[col].fillna('missing')
-                # Конвертируем в string
+                # Convert to string
                 X_copy[col] = X_copy[col].astype(str)
 
         # StandardScaler cannot center sparse matrices; use with_mean=False when data is sparse
@@ -82,18 +82,18 @@ class TabularPreprocessor(BasePreprocessor):
 
         scaler = StandardScaler(with_mean=not numeric_is_sparse)
 
-        # Создаем пайплайн для числовых колонок
+        # Pipeline for numeric columns
         numeric_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='median')),
             ('scaler', scaler)
         ])
 
-        # Создаем пайплайн для категориальных колонок
+        # Pipeline for categorical columns
         categorical_transformer = Pipeline(steps=[
             ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
         ])
 
-        # Комбинируем трансформеры
+        # Combine the transformers
         preprocessor = ColumnTransformer(
             transformers=[
                 ('num', numeric_transformer, numeric_cols),
@@ -102,7 +102,7 @@ class TabularPreprocessor(BasePreprocessor):
             remainder='drop'
         )
 
-        # Подгоняем на данных
+        # Fit on the data
         preprocessor.fit(X_copy)
 
         self.preprocessor = preprocessor
@@ -116,34 +116,34 @@ class TabularPreprocessor(BasePreprocessor):
 
     def transform(self, X: pd.DataFrame) -> np.ndarray:
         """
-        Преобразовать данные
+        Transform the data
         
         Args:
-            X: Признаки (DataFrame или numpy array)
+            X: Features (DataFrame or numpy array)
             
         Returns:
-            Преобразованные признаки (numpy array)
+            Transformed features (numpy array)
         """
         if not self.is_fitted:
             raise RuntimeError("Preprocessor is not fitted. Call fit() first.")
 
-        # Если X это numpy array
+        # X is a numpy array
         if isinstance(X, np.ndarray):
-            # Если у нас есть сохраненные original_columns и количество совпадает, конвертируем
+            # If original_columns are saved and the column count matches, convert
             if hasattr(self, '_original_columns') and X.shape[1] == len(self._original_columns):
                 X = pd.DataFrame(X, columns=self._original_columns)
             else:
-                # Если количество колонок не совпадает, это значит что X уже трансформирован
-                # Просто передаем его как есть
+                # If the column count does not match, X is already transformed
+                # Pass it through as is
                 return X
         
-        # Преобразуем категориальные колонки в строки и заполняем NaN
+        # Convert categorical columns to strings and fill NaN
         X_copy = X.copy()
         for col in self.categorical_cols:
             if col in X_copy.columns:
-                # Заполняем NaN значения перед конвертацией типа
+                # Fill NaN values before the type conversion
                 X_copy[col] = X_copy[col].fillna('missing')
-                # Конвертируем в string
+                # Convert to string
                 X_copy[col] = X_copy[col].astype(str)
 
         return self.preprocessor.transform(X_copy)

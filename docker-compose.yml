@@ -13,7 +13,7 @@ services:
     command: >
       sh -c "python microservice/run_api.py"
     healthcheck:
-      # python:slim не содержит curl; urllib из stdlib
+      # python:slim has no curl; use urllib from stdlib
       test:
         [
           "CMD",

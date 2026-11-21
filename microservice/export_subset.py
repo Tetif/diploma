@@ -67,7 +67,7 @@ def replay_train_split(
     sample_size_percentage: float,
     base_dir: str = "experiment_logs",
 ) -> Tuple[pd.DataFrame, pd.Series, Any]:
-    """Тот же train-сплит, что в ExperimentRunner / export (порядок строк = порядок весов influence)."""
+    """Same train split as in ExperimentRunner / export (row order = order of the influence weights)."""
     set_random_seeds(random_state)
 
     dataset_config = DatasetRegistry.get(dataset_name)
@@ -118,8 +118,8 @@ def get_train_targets_for_experiment_config(
     stratify_n_bins: Optional[int] = None,
 ) -> Tuple[List[int], str]:
     """
-    Метки train в порядке строк, согласованном с весами influence.
-    Классификация — метки классов; регрессия — квантильные страты по y (как removal_stratify_target).
+    Train labels in the row order matching the influence weights.
+    Classification: class labels; regression: quantile strata of y (as removal_stratify_target).
     """
     _, y_train, cfg = replay_train_split(
         dataset_name=dataset_name,

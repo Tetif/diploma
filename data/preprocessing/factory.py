@@ -1,5 +1,5 @@
 """
-Фабрика для создания предобработчиков для разных типов данных.
+Factory that creates preprocessors for different data types.
 """
 
 from .base import BasePreprocessor
@@ -8,22 +8,22 @@ from config.datasets.base import BaseDatasetConfig
 
 
 class PreprocessorFactory:
-    """Фабрика для создания предобработчиков"""
+    """Factory that creates preprocessors"""
 
     @staticmethod
     def create(dataset_config: BaseDatasetConfig, logger=None) -> BasePreprocessor:
         """
-        Создать предобработчик для датасета
+        Create a preprocessor for a dataset
         
         Args:
-            dataset_config: Конфигурация датасета
-            logger: Логгер для вывода информации
+            dataset_config: Dataset configuration
+            logger: Logger for output
             
         Returns:
-            Предобработчик подходящего типа
+            Preprocessor of the matching type
             
         Raises:
-            ValueError: Если тип данных не поддерживается
+            ValueError: If the data type is not supported
         """
         data_type = dataset_config.data_type
 

@@ -1,5 +1,5 @@
 {
-  "_doc": "Configuration for Zillow dataset\nRegression, ~90K samples, 50+ features - large dataset.\nУсиленные гиперпараметры для сложной задачи logerror.",
+  "_doc": "Configuration for Zillow dataset\nRegression, ~90K samples, 50+ features - large dataset.\nStronger hyperparameters for the hard logerror task.",
   "normal": {
     "lightgbm": {
       "objective": "regression",

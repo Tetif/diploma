@@ -22,7 +22,7 @@ from typing import Dict, List, Any, Optional, Tuple
 
 
 def _load_viz_matplotlib():
-    """Ленивый импорт matplotlib-визуализации с Agg (только при вызове ExperimentPlotter)."""
+    """Lazy import of the matplotlib visualization with Agg (only when ExperimentPlotter is called)."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -333,7 +333,7 @@ class ExperimentPlotter:
 def _bar_text_vs_best(
     values: List[float], value_fmt: str, higher_is_better: bool
 ) -> List[str]:
-    """Значение + отклонение от лучшего в группе, % (как в matplotlib)."""
+    """Value + deviation from the best in the group, % (as in matplotlib)."""
     deltas = _pct_vs_best([float(v) for v in values], higher_is_better)
     lines = []
     for i, v in enumerate(values):
@@ -353,8 +353,8 @@ def plotly_removal_auc_bars(
     metric_short: str = "AUC",
 ) -> go.Figure:
     """
-    Столбцы AUC только для методов из methods_filter (те же, что на графике removal).
-    Сортировка по rank_score (как experiment_summary).
+    AUC bars only for the methods in methods_filter (same as on the removal plot).
+    Sorted by rank_score (as in experiment_summary).
     """
     colors = _trend_colors_for_methods()
     present: List[str] = []
@@ -427,7 +427,7 @@ def plotly_removal_mean_pct_diff_from_pointwise_best_bars(
     metric_short: str = "метрика",
 ) -> go.Figure:
     """
-    Среднее по точкам |v−ref|/|ref|·100%, где ref — лучшее значение среди выбранных кривых в этой точке.
+    Mean over points of |v-ref|/|ref|*100%, where ref is the best value among the selected curves at that point.
     """
     meta = (METRIC_METADATA or {}).get(metric_name) or {}
     higher = bool(meta.get("higher_is_better", True))
@@ -491,7 +491,7 @@ def plotly_computation_metric_bars(
     yaxis_title: str,
     value_fmt: str,
 ) -> go.Figure:
-    """Один из графиков max_wanted_mb / ram_mb / duration_s по этапам *_computation."""
+    """One of the max_wanted_mb / ram_mb / duration_s plots over the *_computation stages."""
     fig = go.Figure()
     if not rows:
         fig.update_layout(
@@ -504,7 +504,7 @@ def plotly_computation_metric_bars(
     methods = [r["method"] for r in rows]
     vals = [float(r[field]) for r in rows]
     bar_colors = [_resolve_method_color(m, colors) for m in methods]
-    # Память и время: чем меньше тем лучше
+    # Memory and time: lower is better
     text_lines = _bar_text_vs_best(vals, value_fmt, higher_is_better=False)
     fig.add_trace(
         go.Bar(

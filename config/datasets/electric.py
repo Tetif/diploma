@@ -1,4 +1,4 @@
-"""Конфигурация датасета Household Power Consumption (Electric)"""
+"""Household Power Consumption (Electric) dataset configuration"""
 
 from typing import List, Tuple
 import pandas as pd
@@ -7,26 +7,26 @@ from .base import BaseDatasetConfig, PreprocessingConfig
 
 
 class ElectricConfig(BaseDatasetConfig):
-    """Конфигурация для датасета потребления электроэнергии (регрессия)"""
+    """Configuration for the electricity consumption dataset (regression)"""
 
     name = 'electric'
     description = 'Household Power Consumption - Global Active Power Prediction (Regression)'
     data_type = 'tabular'
     task_type = 'regression'
 
-    # Пути (EDA: datasets/electric/household_power_consumption.txt)
+    # Paths (EDA: datasets/electric/household_power_consumption.txt)
     data_path = 'datasets/electric/'
     required_files = ['household_power_consumption.txt']
 
-    # После загрузки: признаки из datetime + числовые колонки
+    # After loading: datetime features + numeric columns
     target_column = 'Global_active_power'
     id_column = None
     columns_to_drop = ['datetime']
     categorical_columns = []
     numeric_columns = [
         'hour', 'day_of_week', 'month',
-        # [AUDIT-FIX M7] 'Global_intensity' убран: это ток в ту же минуту,
-        # Global_active_power ≈ Voltage × Global_intensity / 1000 — утечка целевой переменной.
+        # [AUDIT-FIX M7] 'Global_intensity' removed: it is the current in the same minute,
+        # Global_active_power ~ Voltage x Global_intensity / 1000 - target leakage.
         'Global_reactive_power', 'Voltage',
         'Sub_metering_1', 'Sub_metering_2', 'Sub_metering_3'
     ]
@@ -48,7 +48,7 @@ class ElectricConfig(BaseDatasetConfig):
         self.preprocessing_config.remove_outliers = False
 
     def load_data(self) -> Tuple[pd.DataFrame, pd.Series]:
-        """Загрузить данные Electric (разделитель ;, пропуски ?)."""
+        """Load the Electric data (separator ;, missing values ?)."""
         df = pd.read_csv(
             self.data_path + 'household_power_consumption.txt',
             sep=';',
@@ -66,7 +66,7 @@ class ElectricConfig(BaseDatasetConfig):
         if self.target_column not in df.columns:
             raise ValueError(f"Target column '{self.target_column}' not found in dataset")
 
-        # Удаляем строки с пропусками в целевой переменной
+        # Drop rows with a missing target
         df = df.dropna(subset=[self.target_column])
         target = df[self.target_column].copy().astype(float)
         df = df.drop(columns=[self.target_column, 'datetime'])
@@ -74,7 +74,7 @@ class ElectricConfig(BaseDatasetConfig):
         return df, target
 
     def validate_data(self, df: pd.DataFrame) -> bool:
-        """Валидировать данные Electric."""
+        """Validate the Electric data."""
         for col in self.numeric_columns:
             if col not in df.columns:
                 print(f"Warning: Column '{col}' not found in dataset")
